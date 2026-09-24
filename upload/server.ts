@@ -45,7 +45,7 @@ export function createServer(opts: Options) {
   const server = Bun.serve({
     port: opts.port ?? 8790,
     hostname: opts.host ?? "127.0.0.1",
-    maxRequestBodySize: maxBytes + 64 * 1024,
+    maxRequestBodySize: maxBytes * 4, // backstop only: readCapped answers 413 with a message well before this
     async fetch(req, srv) {
       const url = new URL(req.url);
       if (url.pathname === "/" && (req.method === "GET" || req.method === "HEAD")) {
