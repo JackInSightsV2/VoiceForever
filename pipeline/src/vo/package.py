@@ -3,19 +3,21 @@ import shutil
 import sqlite3
 from pathlib import Path
 
+from vo import drift
+
 INTERFACE = "16001"  # Forever 1.60.1
 DEFAULT_PACK = "VoiceForever_Alliance_1-10"
 PARTS = {"quest_detail": "detail", "quest_progress": "progress", "quest_complete": "complete"}
 
 
-def build_index(rows) -> dict[int, dict[str, dict[str, str]]]:
-    """rows of (quest_id, type, player_gender, file) -> {questId: {part: {gender: file}}}.
+def build_index(rows) -> dict[int, dict[str, dict[str, dict[str, str]]]]:
+    """rows of (quest_id, type, player_gender, file, text_hash) -> {questId: {part: {gender: {file, hash}}}}.
     A line with no $G is filed under both genders, so the addon lookup is always by player gender."""
     index: dict = {}
-    for quest_id, type_, gender, file in rows:
+    for quest_id, type_, gender, file, hash_ in rows:
         genders = index.setdefault(quest_id, {}).setdefault(PARTS[type_], {})
         for g in [gender] if gender else ["m", "f"]:
-            genders.setdefault(g, file)
+            genders.setdefault(g, {"file": file, "hash": hash_})
     return index
 
 
@@ -27,7 +29,9 @@ def lua_index(pack: str, index: dict) -> str:
     out = [f"VoiceForever.RegisterPack({_lua_str(pack)}, {{", "  quests = {"]
     for quest_id in sorted(index):
         parts = ", ".join(
-            f"{part} = {{ " + ", ".join(f"{g} = {_lua_str(f)}" for g, f in sorted(genders.items())) + " }"
+            f"{part} = {{ " + ", ".join(
+                f"{g} = {{ file = {_lua_str(e['file'])}, hash = {_lua_str(e['hash'])} }}"
+                for g, e in sorted(genders.items())) + " }"
             for part, genders in sorted(index[quest_id].items()))
         out.append(f"    [{quest_id}] = {{ {parts} }},")
     out += ["  },", "})", ""]
@@ -51,13 +55,15 @@ def package(conn: sqlite3.Connection, packs_dir: Path, pack: str = DEFAULT_PACK)
     shutil.rmtree(out, ignore_errors=True)
     rows = []
     for r in conn.execute(
-            "SELECT l.id, l.npc_id, l.quest_id, l.type, l.player_gender, a.path FROM lines l"
+            "SELECT l.id, l.npc_id, l.quest_id, l.type, l.player_gender, l.raw_text, l.text_hash, a.path FROM lines l"
             " JOIN audio a ON a.line_id = l.id AND a.status = 'done'"
             " WHERE l.type IN ('quest_detail', 'quest_progress', 'quest_complete') ORDER BY l.id"):
         rel = Path("audio") / str(r["npc_id"] or "narrator") / f"{r['id']}.ogg"
         (out / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(r["path"], out / rel)
-        rows.append((r["quest_id"], r["type"], r["player_gender"], "\\".join(["Interface", "AddOns", pack, *rel.parts])))
+        file = "\\".join(["Interface", "AddOns", pack, *rel.parts])
+        hash_ = r["text_hash"] or drift.text_hash(r["raw_text"], r["player_gender"])
+        rows.append((r["quest_id"], r["type"], r["player_gender"], file, hash_))
     out.mkdir(parents=True, exist_ok=True)
     (out / "index.lua").write_text(lua_index(pack, build_index(rows)))
     (out / f"{pack}.toc").write_text(toc(pack))

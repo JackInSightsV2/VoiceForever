@@ -1,12 +1,22 @@
 -- VoiceForever Core Addon: Voice Packs register their index; quest events look it up and play.
+-- Misses and Drift are recorded through Capture (Capture.lua); Drift hashing lives in Drift.lua.
 VoiceForever = VoiceForever or {}
 local VF = VoiceForever
 
-VF.quests = VF.quests or {} -- [questId][part][gender] = file path
+VF.quests = VF.quests or {} -- [questId][part][gender] = { file = path, hash = Drift hash }
 VF.packs = VF.packs or {}
 
-local PARTS = { QUEST_DETAIL = "detail" }
+local PARTS = { QUEST_DETAIL = "detail", QUEST_PROGRESS = "progress", QUEST_COMPLETE = "complete" }
 local GENDERS = { [2] = "m", [3] = "f" } -- UnitSex
+
+-- The displayed text per interaction, as the player sees it.
+local TEXT = {
+  QUEST_DETAIL = function() return (GetQuestText() or "") .. "\n\n" .. (GetObjectiveText() or "") end,
+  QUEST_PROGRESS = function() return GetProgressText() end,
+  QUEST_COMPLETE = function() return GetRewardText() end,
+  QUEST_GREETING = function() return GetGreetingText() end,
+  GOSSIP_SHOW = function() return C_GossipInfo.GetText() end,
+}
 
 function VF.RegisterPack(name, index)
   VF.packs[#VF.packs + 1] = name
@@ -15,8 +25,8 @@ function VF.RegisterPack(name, index)
     VF.quests[questId] = quest
     for part, genders in pairs(parts) do
       quest[part] = quest[part] or {}
-      for gender, path in pairs(genders) do
-        quest[part][gender] = path
+      for gender, entry in pairs(genders) do
+        quest[part][gender] = entry
       end
     end
   end
@@ -52,20 +62,37 @@ local function debug(...)
   end
 end
 
-local frame = CreateFrame("Frame")
-frame:RegisterEvent("QUEST_DETAIL")
-frame:RegisterEvent("QUEST_FINISHED")
-frame:SetScript("OnEvent", function(_, event)
-  if event == "QUEST_FINISHED" then
-    VF.Stop()
+-- Look up and play; a miss or Drift is recorded through Capture. Gossip has no lookup yet, so it is always a miss.
+local function onInteraction(event)
+  local part = PARTS[event]
+  local questId = part and GetQuestID() or nil
+  local text = TEXT[event]() or ""
+  local hash = VF.PlayerDriftHash(text)
+  local entry = part and VF.Lookup(questId, part, GENDERS[UnitSex("player")])
+  if not entry then
+    VF.Capture.Record("miss", event, questId, text, hash)
+    debug(event, questId, "no audio")
     return
   end
-  local questId, part, gender = GetQuestID(), PARTS[event], GENDERS[UnitSex("player")]
-  local path = VF.Lookup(questId, part, gender)
-  if path then
-    debug(event, questId, gender, path, VF.Play(path) and "playing" or "failed")
+  if entry.hash and hash ~= entry.hash then
+    VF.Capture.Record("drift", event, questId, text, hash, entry.hash)
+    debug(event, questId, "Drift", entry.hash, "->", hash)
+  end
+  debug(event, questId, entry.file, VF.Play(entry.file) and "playing" or "failed")
+end
+
+local frame = CreateFrame("Frame")
+for _, event in ipairs({ "ADDON_LOADED", "QUEST_FINISHED", "QUEST_DETAIL", "QUEST_PROGRESS", "QUEST_COMPLETE",
+  "QUEST_GREETING", "GOSSIP_SHOW" }) do
+  frame:RegisterEvent(event)
+end
+frame:SetScript("OnEvent", function(_, event, arg1)
+  if event == "ADDON_LOADED" then
+    if arg1 == "VoiceForever" then VF.Capture.Load() end
+  elseif event == "QUEST_FINISHED" then
+    VF.Stop()
   else
-    debug(event, questId, gender, "no audio")
+    onInteraction(event)
   end
 end)
 
@@ -74,7 +101,16 @@ SlashCmdList.VOICEFOREVER = function(msg)
   if msg == "debug" then
     VF.debug = not VF.debug
     print("VoiceForever debug", VF.debug and "on" or "off")
+  elseif msg == "export" then
+    local records, drift = VF.Capture.Records(), 0
+    for _, r in ipairs(records) do
+      if r.kind == "drift" then drift = drift + 1 end
+    end
+    print(("VoiceForever: %d Capture records (%d Drift), written on logout or /reload to:"):format(#records, drift))
+    print("World of Warcraft\\<game folder>\\WTF\\Account\\<ACCOUNT>\\SavedVariables\\VoiceForever.lua")
+    print("Upload that file on the VoiceForever upload page.")
   else
-    print("VoiceForever: packs " .. (#VF.packs > 0 and table.concat(VF.packs, ", ") or "none") .. "; /vf debug")
+    print("VoiceForever: packs " .. (#VF.packs > 0 and table.concat(VF.packs, ", ") or "none")
+      .. "; /vf debug, /vf export")
   end
 end

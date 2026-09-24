@@ -1,0 +1,139 @@
+{
+  "fnv1a32": [
+    {
+      "input": "",
+      "hash": "811c9dc5"
+    },
+    {
+      "input": "a",
+      "hash": "e40c292c"
+    },
+    {
+      "input": "foobar",
+      "hash": "bf9cf968"
+    },
+    {
+      "input": "Jäck $N",
+      "hash": "9da5b9d6"
+    }
+  ],
+  "quest_text": [
+    {
+      "name": "plain",
+      "source": "Hello there.",
+      "gender": null,
+      "displayed": "Hello there.",
+      "player": {
+        "name": "Jack",
+        "race": "Human",
+        "class": "Warrior"
+      },
+      "masked": "Hello there.",
+      "hash": "7872ef55"
+    },
+    {
+      "name": "tokens and $B",
+      "source": "Young $c, there is work.$B$BSpeak with the Marshal, $N.",
+      "gender": null,
+      "displayed": "Young warrior, there is work.\n\nSpeak with the Marshal, Jack.",
+      "player": {
+        "name": "Jack",
+        "race": "Human",
+        "class": "Warrior"
+      },
+      "masked": "Young $C, there is work. Speak with the Marshal, $N.",
+      "hash": "2876b88e"
+    },
+    {
+      "name": "gender female, two-word race",
+      "source": "Hello $gsir:madam;, $N the $R.",
+      "gender": "f",
+      "displayed": "Hello madam, Mira the Night Elf.",
+      "player": {
+        "name": "Mira",
+        "race": "Night Elf",
+        "class": "Druid"
+      },
+      "masked": "Hello madam, $N the $R.",
+      "hash": "fc67547a"
+    },
+    {
+      "name": "gender male",
+      "source": "Hello $gsir:madam;, $N the $R.",
+      "gender": "m",
+      "displayed": "Hello sir, Jack the Human.",
+      "player": {
+        "name": "Jack",
+        "race": "Human",
+        "class": "Warrior"
+      },
+      "masked": "Hello sir, $N the $R.",
+      "hash": "7348594c"
+    },
+    {
+      "name": "colour codes and whitespace",
+      "source": "  Bring me   $B 10 |cffffd000Linen|r.  ",
+      "gender": null,
+      "displayed": "Bring me\r\n 10 |cFFFFD000Linen|r.",
+      "player": {
+        "name": "Jack",
+        "race": "Human",
+        "class": "Warrior"
+      },
+      "masked": "Bring me 10 Linen.",
+      "hash": "b9790c0e"
+    },
+    {
+      "name": "name only as a whole word",
+      "source": "Always ready, $N.",
+      "gender": null,
+      "displayed": "Always ready, Al.",
+      "player": {
+        "name": "Al",
+        "race": "Dwarf",
+        "class": "Paladin"
+      },
+      "masked": "Always ready, $N.",
+      "hash": "148d7dd9"
+    },
+    {
+      "name": "case-insensitive race",
+      "source": "A $r like you, $N?",
+      "gender": null,
+      "displayed": "A DWARF like you, Al?",
+      "player": {
+        "name": "Al",
+        "race": "Dwarf",
+        "class": "Paladin"
+      },
+      "masked": "A $R like you, $N?",
+      "hash": "7a6eb3d5"
+    },
+    {
+      "name": "UTF-8 name",
+      "source": "Welcome, $N. Jäckson sends word.",
+      "gender": null,
+      "displayed": "Welcome, Jäck. Jäckson sends word.",
+      "player": {
+        "name": "Jäck",
+        "race": "Gnome",
+        "class": "Mage"
+      },
+      "masked": "Welcome, $N. Jäckson sends word.",
+      "hash": "8fe178bb"
+    },
+    {
+      "name": "objectives joined",
+      "source": "Kill wolves.$B$BKill 8 Young Wolves.",
+      "gender": null,
+      "displayed": "Kill wolves.\n\nKill 8 Young Wolves.\n\n",
+      "player": {
+        "name": "Jack",
+        "race": "Human",
+        "class": "Warrior"
+      },
+      "masked": "Kill wolves. Kill 8 Young Wolves.",
+      "hash": "72ab64ff"
+    }
+  ]
+}
