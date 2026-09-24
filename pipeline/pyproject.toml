@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "VoiceForever offline voice pipeline"
 requires-python = ">=3.12"
 dependencies = [
+    "en-core-web-sm",
     "lupa>=2.8",
     "misaki[en]>=0.9.4",
     "mlx-audio>=0.5.6",
@@ -19,3 +20,6 @@ dev = ["pytest>=8"]
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.uv.sources]
+en-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }
