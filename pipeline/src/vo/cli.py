@@ -55,9 +55,12 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--host", default="127.0.0.1", help="bind address (e.g. a Tailscale IP to check from a phone)")
     p.add_argument("--audio", type=Path, default=BUILD / "audio", help="audio dir to serve for playback")
     bo = sub.add_parser("bakeoff", help="render the model bake-off and its listening page (needs --group bakeoff)")
-    bo.add_argument("--round", type=int, choices=(1, 2), default=1,
-                    help="1: model comparison; 2: fantasy race voices (designers, cloners, DSP, VC)")
-    bo.add_argument("--out", type=Path, help="default build/bakeoff (round 1) or build/bakeoff2 (round 2)")
+    bo.add_argument("--round", type=int, choices=(1, 2, 3), default=1,
+                    help="1: model comparison; 2: fantasy race voices (designers, cloners, DSP, VC); "
+                         "3: consistent VoxCPM2 NPC voices")
+    bo.add_argument("--out", type=Path, help="default build/bakeoff, build/bakeoff2 or build/bakeoff3 by round")
+    bo.add_argument("--r2-out", type=Path, default=Path("build/bakeoff2"), help="round 3: round-2 output (baseline)")
+    bo.add_argument("--best", help="round 3: variant for the dwarf and distinct-NPC tests (default: picked by rule)")
     bo.add_argument("--models", default="all", help="comma-separated model (round 1) or approach (round 2) ids, or 'all'")
     bo.add_argument("--r1-out", type=Path, default=Path("build/bakeoff"), help="round-1 output, for the benchmark clips")
     bo.add_argument("--no-variation", action="store_true", help="round 2: skip the per-NPC variation test")
@@ -144,6 +147,13 @@ def main(argv: list[str] | None = None) -> None:
         db.connect(args.db).close()  # create it and its tables (WAL) so the dashboard can open it read-only
         os.execv(bun, [bun, str(DASHBOARD / "server.ts"), "--db", str(args.db), "--audio", str(args.audio),
                        "--port", str(args.port), "--host", args.host])
+    elif args.command == "bakeoff" and args.round == 3:
+        from vo.bakeoff import round3, run3
+
+        if args.best and args.best not in round3.VARIANT_IDS:
+            parser.error(f"unknown variant {args.best!r}; choose from {list(round3.VARIANT_IDS)}")
+        run3.bakeoff3(args.out or Path("build/bakeoff3"), r2_out=args.r2_out, best=args.best, force=args.force,
+                      page_only=args.page_only)
     elif args.command == "bakeoff" and args.round == 2:
         from vo.bakeoff import round2, run2
 
