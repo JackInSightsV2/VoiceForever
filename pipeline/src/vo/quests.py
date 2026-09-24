@@ -1,7 +1,7 @@
 """Quest Text extraction from Source Data into `lines`."""
 import sqlite3
 
-from vo import source, text
+from vo import drift, source, text
 
 
 def detail_text(q: sqlite3.Row) -> str:
@@ -28,9 +28,9 @@ def extract_detail(conn: sqlite3.Connection, world: sqlite3.Connection, quest_id
             (quest_id, npc_id, gender, raw)).fetchone()
         if row is None:
             row = conn.execute(
-                "INSERT INTO lines (npc_id, type, quest_id, player_gender, raw_text, tts_text)"
-                " VALUES (?, 'quest_detail', ?, ?, ?, ?) RETURNING id",
-                (npc_id, quest_id, gender, raw, text.prepare(raw, gender))).fetchone()
+                "INSERT INTO lines (npc_id, type, quest_id, player_gender, raw_text, tts_text, text_hash)"
+                " VALUES (?, 'quest_detail', ?, ?, ?, ?, ?) RETURNING id",
+                (npc_id, quest_id, gender, raw, text.prepare(raw, gender), drift.text_hash(raw, gender))).fetchone()
         ids.append(row[0])
     conn.commit()
     return ids

@@ -1,29 +1,28 @@
-import shutil
-import subprocess
-from pathlib import Path
-
 import pytest
 
-from vo import db, install, package
+from conftest import CORE, lua_literal
+from vo import db, drift, install, package
 
-CORE = Path(__file__).resolve().parents[2] / "addon" / "VoiceForever"
 PACK = "VoiceForever_Test"
 
 
 def test_build_index_files_genderless_line_under_both_genders():
     index = package.build_index([
-        (783, "quest_detail", None, "a.ogg"),
-        (9, "quest_detail", "m", "m.ogg"),
-        (9, "quest_detail", "f", "f.ogg"),
+        (783, "quest_detail", None, "a.ogg", "h0"),
+        (9, "quest_detail", "m", "m.ogg", "hm"),
+        (9, "quest_detail", "f", "f.ogg", "hf"),
     ])
-    assert index == {783: {"detail": {"m": "a.ogg", "f": "a.ogg"}}, 9: {"detail": {"m": "m.ogg", "f": "f.ogg"}}}
+    a = {"file": "a.ogg", "hash": "h0"}
+    assert index == {783: {"detail": {"m": a, "f": a}},
+                     9: {"detail": {"m": {"file": "m.ogg", "hash": "hm"}, "f": {"file": "f.ogg", "hash": "hf"}}}}
 
 
 def test_lua_index():
-    assert package.lua_index("P", {783: {"detail": {"m": "Interface\\AddOns\\P\\a.ogg"}}}) == (
+    entry = {"file": "Interface\\AddOns\\P\\a.ogg", "hash": "0badf00d"}
+    assert package.lua_index("P", {783: {"detail": {"m": entry}}}) == (
         'VoiceForever.RegisterPack("P", {\n'
         "  quests = {\n"
-        '    [783] = { detail = { m = "Interface\\\\AddOns\\\\P\\\\a.ogg" } },\n'
+        '    [783] = { detail = { m = { file = "Interface\\\\AddOns\\\\P\\\\a.ogg", hash = "0badf00d" } } },\n'
         "  },\n"
         "})\n")
 
@@ -41,31 +40,25 @@ def built_pack(tmp_path):
 def test_package_writes_addon(built_pack):
     assert (built_pack / "audio" / "823" / "1.ogg").read_bytes() == b"OggS"
     assert "## Dependencies: VoiceForever" in (built_pack / f"{PACK}.toc").read_text()
-    assert '"Interface\\\\AddOns\\\\VoiceForever_Test\\\\audio\\\\823\\\\1.ogg"' in (built_pack / "index.lua").read_text()
+    index = (built_pack / "index.lua").read_text()
+    assert '"Interface\\\\AddOns\\\\VoiceForever_Test\\\\audio\\\\823\\\\1.ogg"' in index
+    assert f'hash = "{drift.text_hash("x")}"' in index
 
 
-HARNESS = """
-local played, stopped, handler = {}, {}, nil
-function CreateFrame() return { RegisterEvent = function() end, SetScript = function(_, _, f) handler = f end } end
-function PlaySoundFile(path, channel) played[#played + 1] = path .. "|" .. channel; return true, 42 end
-function StopSound(h) stopped[#stopped + 1] = h end
-function GetQuestID() return QUEST end
-function UnitSex() return SEX end
-SlashCmdList = {}
-dofile(CORE)
-dofile(INDEX)
-QUEST, SEX = 783, 3; handler(nil, "QUEST_DETAIL")
-handler(nil, "QUEST_FINISHED")
-QUEST = 1; handler(nil, "QUEST_DETAIL")
-print(table.concat(played, ","), table.concat(stopped, ","))
-"""
-
-
-@pytest.mark.skipif(not shutil.which("lua"), reason="lua not installed")
-def test_core_addon_plays_pack_audio_on_quest_detail(built_pack):
-    script = f'CORE, INDEX = "{CORE / "VoiceForever.lua"}", "{built_pack / "index.lua"}"\n' + HARNESS
-    out = subprocess.run(["lua", "-"], input=script, capture_output=True, text=True, check=True).stdout
-    assert out == "Interface\\AddOns\\VoiceForever_Test\\audio\\823\\1.ogg|Dialog\t42\n"
+def test_core_addon_plays_pack_audio_on_quest_detail(built_pack, lua):
+    (played, stopped, captured) = lua(f"""
+      load_addon()
+      dofile({lua_literal(str(built_pack / "index.lua"))})
+      WOW.quest, WOW.text.quest = 783, "x"
+      fire("QUEST_DETAIL")
+      fire("QUEST_FINISHED")
+      WOW.quest = 1
+      fire("QUEST_DETAIL")
+      emit(WOW.played) emit(WOW.stopped) emit(#VoiceForeverDB.capture)
+    """)
+    assert played == ["Interface\\AddOns\\VoiceForever_Test\\audio\\823\\1.ogg|Dialog"]
+    assert stopped == [42]
+    assert captured == 1  # quest 1 is a miss; quest 783 matched its hash
 
 
 def test_install_symlinks_core_and_packs(built_pack, tmp_path):
