@@ -9,7 +9,7 @@ World of Warcraft: Forever, Blizzard's official level-60 branch of WoW set in th
 _Avoid_: Warcraft Forever, 1.12 client, vanilla client, private server
 
 **Source Data**:
-The offline data behind Core Content: Blizzard's own client text tables for gossip and scripted lines, and an emulator world database (VMaNGOS) for quest text, NPCs, spawns and quest links.
+The offline data behind Core Content: the VMaNGOS world database (quest text, gossip, NPCs, spawns, quest links), QuestieDB's Forever tables (zones, quest givers), and the Forever client's display tables (race and gender).
 
 ## Voices
 
