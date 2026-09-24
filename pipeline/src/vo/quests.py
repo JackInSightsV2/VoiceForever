@@ -11,14 +11,16 @@ def detail_text(q: sqlite3.Row) -> str:
 
 
 def extract_detail(conn: sqlite3.Connection, world: sqlite3.Connection, quest_id: int) -> list[int]:
-    """Store one quest's detail text as a line per player gender variant; return line ids."""
+    """Store one quest's detail text as a line per player gender variant; return line ids.
+    Every variant keeps the raw text with its tokens intact; tts_text is its spoken form."""
     q = source.quest(world, quest_id)
     if q is None:
         raise KeyError(f"quest {quest_id} not in Source Data")
     givers = source.quest_givers(world, quest_id)
     npc_id = givers[0] if givers else None  # None: object/item quest, voiced by the Narrator
     ids = []
-    for gender, raw in text.gender_variants(detail_text(q)).items():
+    raw = detail_text(q)
+    for gender in text.genders(raw):
         # UNIQUE doesn't dedupe NULL npc_id/player_gender in SQLite, so match with IS.
         row = conn.execute(
             "SELECT id FROM lines WHERE type = 'quest_detail' AND quest_id = ?"
@@ -28,7 +30,7 @@ def extract_detail(conn: sqlite3.Connection, world: sqlite3.Connection, quest_id
             row = conn.execute(
                 "INSERT INTO lines (npc_id, type, quest_id, player_gender, raw_text, tts_text)"
                 " VALUES (?, 'quest_detail', ?, ?, ?, ?) RETURNING id",
-                (npc_id, quest_id, gender, raw, text.tts_text(raw))).fetchone()
+                (npc_id, quest_id, gender, raw, text.prepare(raw, gender))).fetchone()
         ids.append(row[0])
     conn.commit()
     return ids
