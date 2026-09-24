@@ -102,7 +102,7 @@ def _results():
         "variation": {"archetype": {"ref_file": "refs/vox/orc_m.wav", "chain": "c", "dsp_ref_file": "refs/dsp/orc_m.wav"},
                       "npcs": {"3139": {"chain": "pitch_st=-2", "ref_file": "variation/3139/ref.wav",
                                         "clips": {"21-greeting": clip}}},
-                      "similarity": {"archetype|3139": 0.91}},
+                      "similarity": {"archetype|3139": 0.91}, "self_similarity": {"archetype": 0.95}},
         "benchmark": {"dwarf_m": {"label": "Dwarf bench", "clips": {"01-greeting": {"file": "benchmark/dwarf_m/01-greeting.wav",
                                                                                    "wer": 0.0}}}},
     }

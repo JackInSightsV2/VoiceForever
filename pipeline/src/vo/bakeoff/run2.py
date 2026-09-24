@@ -299,63 +299,85 @@ def cosine(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def variation(out: Path, results: dict, chains: dict, check: Checker, force: bool, log) -> None:
-    """Three orc NPC Voices from one Archetype: each NPC's timbre reference is the Archetype's designed
-    reference through the race chain jittered by NPC id (dsp.vary); accent/prosody stay the Archetype's."""
+    """Orc NPC Voices from one Archetype, two ways, all rendered with cb-vc:
+    A "dsp": timbre reference = the Archetype's designed reference through the race chain jittered by
+      NPC id (dsp.vary); words/accent (T3) stay the Archetype's.
+    B "design": another VoxCPM2 Candidate of the same Archetype prompt (a different design seed) as the
+      NPC's reference, through the same race chain; T3 from that Candidate.
+    Speaker-embedding cosines show how far apart the NPCs are compared with the Archetype's own clips."""
     from vo.bakeoff import engines2
 
     vid = round2.VARIATION_VOICE
     rec = results["variation"]
-    if not force and rec.get("done"):
+    if not force and rec.get("done") == 2:
         return
-    a = round2.approach("cb-vc")
     arche = out / f"refs/vox/{vid}.wav"
     audio, sr = _read(arche)
-    npc_refs = {}
-    rec["archetype"] = {"ref_file": str(arche.relative_to(out)), "chain": chains[vid].describe(),
+    chain = chains[vid]
+    rec.clear()
+    rec["archetype"] = {"ref_file": str(arche.relative_to(out)), "chain": chain.describe(),
                         "dsp_ref_file": f"refs/dsp/{vid}.wav"}
+    npcs = {}  # name -> (method, t3 ref, gen ref, description)
     for npc in round2.VARIATION_NPCS:
-        chain = dsp.vary(chains[vid], npc)
+        c = dsp.vary(chain, npc)
         p = out / f"variation/{npc}/ref.wav"
-        _write(p, dsp.apply(audio, sr, chain), sr)
-        npc_refs[npc] = p
-        rec.setdefault("npcs", {})[str(npc)] = {"chain": chain.describe(), "ref_file": str(p.relative_to(out)),
-                                                "clips": {}}
-    engine = engines2.load(a, ref_paths(out, "vox"), {})
+        _write(p, dsp.apply(audio, sr, c), sr)
+        npcs[str(npc)] = ("dsp", arche, p, f"race chain jittered by NPC id: {c.describe()}")
+    chosen = results["refs"]["vox"][vid]
+    for seed, cand in sorted(results["candidates"]["vox"][vid].items()):
+        if seed == chosen:
+            continue
+        src = out / cand["file"]
+        a2, sr2 = _read(src)
+        p = out / f"variation/seed{seed}/ref.wav"
+        _write(p, dsp.apply(a2, sr2, chain), sr2)
+        npcs[f"seed{seed}"] = ("design", src, p, f"VoxCPM2 design seed {seed} of the Archetype prompt "
+                                                 f"({_fmt_feat(cand['features'])}), same race chain")
+    engine = engines2.load(round2.approach("cb-vc"), ref_paths(out, "vox"), {})
     enc = engines2.SpeakerEncoder(engine.model)
     lines = {l.id: l for l in round2.lines() if l.voice == vid}
-    embs = {"archetype": enc(*_read(out / f"refs/dsp/{vid}.wav"))}
-    for npc, ref in npc_refs.items():
-        conds = engine.split(arche, ref)
-        clip_embs = []
-        for lid in round2.VARIATION_LINES:
-            line = lines[lid]
+
+    def clip_embs(clips: list[dict]) -> list[np.ndarray]:
+        return [enc(*_read(out / c["file"])) for c in clips]
+
+    arche_clips = [results["clips"]["cb-vc"][f"{vid}/{lid}"] for lid in round2.VARIATION_LINES]
+    per = {"archetype": clip_embs(arche_clips)}
+    rec["npcs"] = {}
+    for name, (method, t3_ref, gen_ref, desc) in npcs.items():
+        conds = engine.split(t3_ref, gen_ref)
+        n = rec["npcs"][name] = {"method": method, "chain": desc, "ref_file": str(gen_ref.relative_to(out)),
+                                 "clips": {}}
+        for i, lid in enumerate(round2.VARIATION_LINES):
             import mlx.core as mx
 
-            mx.random.seed(npc)
+            mx.random.seed(1000 + i)
             t = time.perf_counter()
-            y, ysr = _collect_cb(engine, line.text, conds)
+            y, ysr = _collect_cb(engine, lines[lid].text, conds)
             wall = time.perf_counter() - t
-            wav = out / f"variation/{npc}/{lid}.wav"
+            wav = out / f"variation/{gen_ref.parent.name}/{lid}.wav"
             _write(wav, y, ysr)
-            c = _clip(out, wav, len(y) / ysr, wall, line, check)
-            rec["npcs"][str(npc)]["clips"][lid] = c
-            clip_embs.append(enc(y, ysr))
-            log(f"variation npc {npc} {lid}: WER {c['wer']:.0%} {c['features']}")
-        embs[str(npc)] = np.mean(clip_embs, axis=0)
-    names = list(embs)
-    rec["similarity"] = {f"{x}|{y}": round(cosine(embs[x], embs[y]), 3)
+            n["clips"][lid] = _clip(out, wav, len(y) / ysr, wall, lines[lid], check)
+            log(f"variation {name} {lid}: WER {n['clips'][lid]['wer']:.0%} {n['clips'][lid]['features']}")
+        per[name] = clip_embs(list(n["clips"].values()))
+    for v in ("orc_f", "troll_m", "dwarf_f"):
+        cs = [c for k, c in results["clips"].get("cb-vc", {}).items() if k.startswith(v + "/")][:3]
+        if cs:
+            per[f"other:{v}"] = clip_embs(cs)
+    means = {k: np.mean(e, axis=0) for k, e in per.items()}
+    names = list(means)
+    rec["similarity"] = {f"{x}|{y}": round(cosine(means[x], means[y]), 3)
                          for i, x in enumerate(names) for y in names[i + 1:]}
-    # Reference points: the Archetype's own cb-vc clip, and other voices' cb-vc clips.
-    other = {}
-    for v in ("orc_m", "orc_f", "troll_m", "dwarf_f"):
-        c = next((c for k, c in results["clips"].get("cb-vc", {}).items() if k.startswith(v + "/")), None)
-        if c:
-            other[v] = round(cosine(embs["archetype"], enc(*_read(out / c["file"]))), 3)
-    rec["other_races_vs_orc_archetype"] = other
-    rec["done"] = True
+    rec["self_similarity"] = {k: round(float(np.mean([cosine(e[i], e[j]) for i in range(len(e))
+                                                      for j in range(i + 1, len(e))])), 3)
+                              for k, e in per.items() if len(e) > 1}
+    rec["done"] = 2
     save_results(out, results)
     del engine
     _free()
+
+
+def _fmt_feat(f: dict) -> str:
+    return ", ".join(f"{k} {v:g}" for k, v in f.items() if v is not None)
 
 
 def _collect_cb(engine, text, conds):

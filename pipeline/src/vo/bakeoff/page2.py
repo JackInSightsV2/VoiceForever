@@ -260,33 +260,50 @@ def benchmark_section(results: dict) -> str:
     return "".join(out) or '<p class="muted">Round-1 clips not found.</p>'
 
 
+VARIATION_METHODS = {
+    "dsp": ("A. DSP jitter of the Archetype's timbre",
+            f"The NPC's S3Gen timbre reference is the Archetype's designed reference run through the race chain, "
+            f"jittered by NPC id (pitch ±{dsp.VARY['pitch_st']:g} st, formant ±{dsp.VARY['formant']:g}, rasp, "
+            f"sub-octave, saturation). Words and accent (T3) stay the Archetype's."),
+    "design": ("B. Another design seed of the Archetype prompt",
+               "The NPC's reference is a different VoxCPM2 Candidate for the same orc prompt, run through the same "
+               "race chain. T3 and S3Gen both come from that Candidate."),
+}
+
+
 def variation_section(results: dict) -> str:
     rec = results.get("variation", {})
     if not rec.get("npcs"):
         return '<p class="muted">Not rendered.</p>'
     arch = rec.get("archetype", {})
-    out = [f'<p><small>Archetype: the orc male VoxCPM2 reference (accent and prosody, T3) and its DSP\'d version '
-           f'(<code>{escape(arch.get("chain", ""))}</code>). Each NPC\'s timbre reference is the designed reference '
-           f'through the race chain <b>jittered by NPC id</b> (pitch ±{dsp.VARY["pitch_st"]:g} st, formant '
-           f'±{dsp.VARY["formant"]:g}, rasp, sub-octave, saturation), then cloned with cb-vc. It\'s deterministic and needs no human step.</small></p>',
+    out = [f'<p><small>Archetype: the orc male VoxCPM2 reference and its DSP\'d version '
+           f'(<code>{escape(arch.get("chain", ""))}</code>), rendered with cb-vc. Two deterministic ways to derive '
+           f'NPC Voices from it with no human step:</small></p>',
            '<div class="clips">' + _player("Archetype, designed", {"file": arch.get("ref_file", "")})
            + _player("Archetype, DSP'd", {"file": arch.get("dsp_ref_file", "")}) + '</div>']
-    for npc, n in rec["npcs"].items():
-        players = "".join(_player(lid, c) for lid, c in n.get("clips", {}).items())
-        out.append(f'<div class="card"><b>NPC {escape(npc)}</b> <small class="muted"><code>{escape(n["chain"])}</code></small>'
-                   f'<div class="clips">{_player("reference", {"file": n["ref_file"]})}{players}</div></div>')
+    for method, (title, desc) in VARIATION_METHODS.items():
+        npcs = {k: n for k, n in rec["npcs"].items() if n.get("method", "dsp") == method}
+        if not npcs:
+            continue
+        out.append(f'<h3>{escape(title)}</h3><p class="muted"><small>{escape(desc)}</small></p>')
+        for name, n in npcs.items():
+            label = f"NPC {name}" if name.isdigit() else name
+            players = "".join(_player(lid, c) for lid, c in n.get("clips", {}).items())
+            out.append(f'<div class="card"><b>{escape(label)}</b> <small class="muted">{escape(n["chain"])}</small>'
+                       f'<div class="clips">{_player("reference", {"file": n["ref_file"]})}{players}</div></div>')
     sims = rec.get("similarity", {})
     if sims:
         rows = "".join(f'<tr><td>{escape(k.replace("|", " vs "))}</td><td class="n">{s:.3f}</td></tr>'
                        for k, s in sims.items())
-        other = "".join(f'<tr><td>orc archetype (DSP\'d ref) vs {escape(v)} cb-vc clip</td><td class="n">{s:.3f}</td></tr>'
-                        for v, s in rec.get("other_races_vs_orc_archetype", {}).items())
+        selfs = "".join(f'<tr><td>{escape(k)}: clip vs clip of the same voice</td><td class="n">{s:.3f}</td></tr>'
+                        for k, s in rec.get("self_similarity", {}).items())
         out.append('<h3>Speaker-embedding similarity</h3><div class="scroll"><table><thead><tr><th>Pair</th>'
-                   '<th>Cosine</th></tr></thead><tbody>' + rows + other + '</tbody></table></div>'
-                   '<p class="muted"><small>Chatterbox voice-encoder embeddings (NPCs: mean over their 3 clips). '
-                   'For reference, the other rows compare the orc Archetype with clips of other voices. '
-                   'Neighbours need clearly lower similarity than an NPC has to itself; the spec\'s floor and ceiling '
-                   'would be tuned on numbers like these.</small></p>')
+                   '<th>Cosine</th></tr></thead><tbody>' + selfs + rows + '</tbody></table></div>'
+                   '<p class="muted"><small>Chatterbox voice-encoder embeddings, averaged over each voice\'s 3 clips '
+                   '(the Archetype uses its cb-vc clips of the same lines). "other:" rows are cb-vc clips of other '
+                   'races. Two clips of the same voice score about the "same voice" level. Neighbours should score clearly '
+                   'lower than that and still well above the other races. The spec\'s floor and ceiling would be set '
+                   'from numbers like these.</small></p>')
     return "".join(out)
 
 
