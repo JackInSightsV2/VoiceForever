@@ -42,7 +42,9 @@ VARIANTS: tuple[Variant, ...] = (
             "Continuation mode: the NPC's designed anchor clip and its transcript are the prompt; each line "
             "continues from it (prompt_audio + prompt_text). No description."),
     Variant("cont-desc", "Anchor continuation + description", "D", True, True, False, True, False,
-            "As B, with the description in parentheses before the line text (after the anchor transcript)."),
+            "As B, with the description in parentheses before the line text (after the anchor transcript). "
+            "Broken: mid-sequence, VoxCPM2 reads the description aloud instead of treating it as an instruction "
+            "(WER 190-350%), so its high consistency is meaningless."),
     Variant("ultimate", "Anchor 'ultimate cloning' (ref + continuation)", "B2", True, False, True, True, False,
             "The model card's 'ultimate cloning': the anchor as both reference_wav and continuation prompt."),
     Variant("ref", "Anchor as reference (plain cloning)", "C0", True, False, True, False, False,
@@ -79,6 +81,10 @@ def generate_kwargs(v: Variant, description: str, anchor: str | None, anchor_tex
 REPO = "mlx-community/VoxCPM2-bf16"
 SETTINGS = {"inference_timesteps": 10, "cfg_value": 2.0}  # model defaults, as in round 2
 LICENCE = "Apache-2.0 (openbmb/VoxCPM2)"
+# The first run's cont and ref-desc renders overlapped a CPU embedding job, which depressed their RTF.
+# A separate re-time of the same 10 lines (orc male / orc female, nothing else running) gave:
+RETIMED_RTF = {"direct": (1.74, 1.11), "cont": (1.53, 0.92), "ref-desc": (1.46, 1.17), "ultimate": (1.22, 1.16),
+               "ref": (1.12, 1.26)}
 EMBEDDER = "microsoft/wavlm-base-plus-sv"
 EMBEDDER_LABEL = "WavLM-Base-Plus-SV x-vector (microsoft/wavlm-base-plus-sv)"
 EMBEDDER_SAME = 0.86  # the model card's suggested same-speaker cosine threshold
@@ -255,12 +261,19 @@ MAX_HNR_RISE = 3.0
 WER_SLACK = 0.05
 
 
-def keeps_character(row: dict, base: dict) -> bool:
-    """row/base: {"f0", "hnr", "wer"} medians/means for one voice. Pitch within MAX_F0_ST semitones,
-    not much smoother (HNR rise), and WER no worse than baseline + slack."""
+def keeps_character(row: dict, base: dict, target_f0: float | None = None) -> bool:
+    """row/base: {"f0", "hnr", "wer"} medians/means for one voice. Pitch within MAX_F0_ST semitones of
+    the baseline (or else closer to the voice's target pitch than the baseline is: an anchor picked for a
+    deeper orc is not a loss of character), not much smoother (HNR rise), and WER no worse than
+    baseline + slack."""
     st = semitones(row.get("f0"), base.get("f0"))
-    if st is None or abs(st) > MAX_F0_ST:
+    if st is None:
         return False
+    if abs(st) > MAX_F0_ST:
+        toward = (target_f0 is not None
+                  and abs(math.log2(row["f0"] / target_f0)) < abs(math.log2(base["f0"] / target_f0)))
+        if not toward:
+            return False
     if row.get("hnr") is not None and base.get("hnr") is not None and row["hnr"] - base["hnr"] > MAX_HNR_RISE:
         return False
     if row.get("wer") is not None and base.get("wer") is not None and row["wer"] > base["wer"] + WER_SLACK:
@@ -279,7 +292,8 @@ def pick_best(table: dict[str, dict[str, dict]], base: dict[str, dict]) -> str |
         ws = [r["within"] for r in rows.values() if r.get("within") is not None]
         if not ws:
             continue
-        kept = sum(keeps_character(r, base.get(voice, {})) for voice, r in rows.items())
+        kept = sum(bool(r["keeps"]) if "keeps" in r else keeps_character(r, base.get(voice, {}))
+                   for voice, r in rows.items())
         scored.append((kept == len(rows), kept, statistics.fmean(ws), vid))
     return max(scored)[3] if scored else None
 
@@ -357,7 +371,7 @@ def build_stats(results: dict, r2_clips: dict, emb: dict) -> dict:
             r["d_st"] = semitones(r["f0"], b.get("f0"))
             r["d_hnr"] = (round(r["hnr"] - b["hnr"], 1)
                           if r["hnr"] is not None and b.get("hnr") is not None else None)
-            r["keeps"] = keeps_character(r, b) if b else None
+            r["keeps"] = keeps_character(r, b, round2.voice(voice).target.f0) if b else None
             rows[voice] = r
         if not rows:
             continue

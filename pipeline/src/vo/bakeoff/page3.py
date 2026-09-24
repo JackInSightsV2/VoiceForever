@@ -288,7 +288,12 @@ def numbers_table(results: dict) -> str:
             f'vox-direct. ✓ = keeps character by rule: pitch within {round3.MAX_F0_ST:g} st, HNR up by at most '
             f'{round3.MAX_HNR_RISE:g} dB, WER at most {round3.WER_SLACK:.0%} over vox-direct. <b>Between voices</b> = mean '
             '(and max) clip cosine between two different voices of the same variant. Troll WER is inflated by the '
-            'dialect spellings in the script ("dem", "de", "mon"), not only by the audio. Accent is not measured: listen.</small></p>')
+            'dialect spellings in the script ("dem", "de", "mon"), not only by the audio. Accent is not measured: listen.</small></p>'
+            '<p class="muted"><small>RTF caveat: the first run\'s cont and ref-desc renders overlapped a CPU embedding '
+            'job. A clean re-time of orc male / orc female gave ' +
+            "; ".join(f"{escape(k)} {a:.2f} / {b:.2f}" for k, (a, b) in round3.RETIMED_RTF.items()) +
+            '. All VoxCPM2 modes run at roughly 1–1.7× realtime here; conditioning mode makes no consistent '
+            'difference.</small></p>')
 
 
 def r2_table(results: dict) -> str:

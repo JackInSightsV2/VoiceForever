@@ -74,6 +74,9 @@ def test_character_guard_and_best_variant_rule():
     assert not round3.keeps_character({"f0": 130, "hnr": 5, "wer": 0.0}, base), "more than 2 semitones up"
     assert not round3.keeps_character({"f0": 100, "hnr": 9, "wer": 0.0}, base), "much smoother"
     assert not round3.keeps_character({"f0": 100, "hnr": 5, "wer": 0.2}, base), "less intelligible"
+    deeper = {"f0": 70, "hnr": 5, "wer": 0.0}
+    assert round3.keeps_character(deeper, base, target_f0=75), "moved toward the orc target"
+    assert not round3.keeps_character(deeper, base, target_f0=200), "moved away from the target"
     good = {"f0": 100, "hnr": 5, "wer": 0.05}
     smooth = {"f0": 100, "hnr": 12, "wer": 0.0}
     table = {
