@@ -2,7 +2,8 @@ import sqlite3
 
 import pytest
 
-from vo import db, extract, source, stats
+from conftest import lua_literal
+from vo import db, drift, extract, ingest, run as vo_run, source, stats
 from vo.display import Displays
 from vo.questie import Npc, Quest, Questie
 
@@ -296,6 +297,76 @@ def test_rerun_keeps_line_ids(conn, world, questie, displays):
     before = conn.execute("SELECT id, raw_text FROM lines ORDER BY id").fetchall()
     run(conn, world, questie, displays)
     assert conn.execute("SELECT id, raw_text FROM lines ORDER BY id").fetchall() == before
+
+
+# ------------------------------------------------------------------ Drift from Capture
+
+SOURCE_DETAIL = "There is work, $c.$B$BSpeak with McBride."  # quest 783's detail text in the Source Data
+CAPTURED = "There is work, $C.$B$BSpeak with Marshal McBride."  # what Forever shows, re-tokenised
+
+
+def ingest_drift(conn, tmp_path):
+    """vo ingest a Drift record for quest 783's detail: Forever shows new wording to a Human Warrior named Jack."""
+    rec = {"kind": "drift", "event": "QUEST_DETAIL", "questId": 783, "npcId": 197, "guidType": "Creature",
+           "locale": "enUS", "text": "There is work, Warrior.\n\nSpeak with Marshal McBride.",
+           "hash": drift.text_hash(CAPTURED), "expected": drift.text_hash(SOURCE_DETAIL)}
+    path = tmp_path / "VoiceForever.lua"
+    path.write_text(f"VoiceForeverDB = {lua_literal({'capture': [rec]})}\n", encoding="utf-8")
+    return ingest.ingest_file(conn, path)[1]
+
+
+def detail_783(conn):
+    return conn.execute("SELECT * FROM lines WHERE type = 'quest_detail' AND quest_id = 783").fetchall()
+
+
+def done(conn):
+    vo_run.sync_jobs(conn, "kokoro:am_michael")
+    conn.execute("UPDATE jobs SET status = 'done'")
+    conn.commit()
+
+
+def test_reextraction_keeps_drift_and_does_not_requeue(conn, world, questie, displays, tmp_path):
+    run(conn, world, questie, displays)
+    done(conn)
+    assert ingest_drift(conn, tmp_path)["drift_updates"] == 1
+    done(conn)
+    (line,) = detail_783(conn)
+    run(conn, world, questie, displays)
+    assert [tuple(r) for r in detail_783(conn)] == [tuple(line)]  # same line, captured wording, no Source Data twin
+    assert (line["raw_text"], line["source_text"]) == (CAPTURED, SOURCE_DETAIL)
+    assert vo_run.sync_jobs(conn, "kokoro:am_michael") == 0
+    assert [r[0] for r in conn.execute("SELECT DISTINCT status FROM jobs")] == ["done"]
+
+
+def test_source_data_catching_up_clears_drift(conn, world, questie, displays, tmp_path):
+    run(conn, world, questie, displays)
+    ingest_drift(conn, tmp_path)
+    done(conn)
+    (before,) = detail_783(conn)
+    w = sqlite3.connect(tmp_path / "mangos.sqlite")
+    w.execute("UPDATE quest_template SET Details = 'There is work, $C.', Objectives = 'Speak with Marshal McBride.'"
+              " WHERE entry = 783 AND patch = 3")
+    w.commit()
+    w.close()
+    run(conn, world, questie, displays)
+    (line,) = detail_783(conn)
+    assert line["id"] == before["id"]
+    assert line["raw_text"] == line["source_text"] == CAPTURED  # no longer drifted
+    assert line["text_hash"] == before["text_hash"]
+    assert vo_run.sync_jobs(conn, "kokoro:am_michael") == 0
+
+
+def test_drift_ingested_before_its_core_line_applies_on_extraction(conn, world, questie, displays, tmp_path):
+    c = ingest_drift(conn, tmp_path)
+    assert (c["drift_updates"], c["unmatched"]) == (0, 1)
+    assert run(conn, world, questie, displays)["drift_retried"] == 1
+    (line,) = detail_783(conn)
+    assert (line["raw_text"], line["source_text"]) == (CAPTURED, SOURCE_DETAIL)
+    capture_id = conn.execute("SELECT id FROM capture").fetchone()[0]
+    assert [tuple(r) for r in conn.execute("SELECT raw_text, reason, capture_id FROM line_history WHERE line_id = ?",
+                                           (line["id"],))] == [(SOURCE_DETAIL, "drift", capture_id)]
+    assert run(conn, world, questie, displays)["drift_retried"] == 0  # applied once
+    assert [tuple(r) for r in detail_783(conn)] == [tuple(line)]
 
 
 # ------------------------------------------------------------------ role, is_named, stats

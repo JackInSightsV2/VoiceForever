@@ -11,7 +11,7 @@ import sqlite3
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
-from vo import drift, gossip, quests, text
+from vo import drift, gossip, ingest, quests, text
 from vo.display import Display, Displays
 from vo.questie import Questie
 
@@ -400,8 +400,11 @@ def extract_all(conn: sqlite3.Connection, world: sqlite3.Connection, questie: Qu
             if zone and zone > 0:
                 quest_zones[n][zone] += 1
     _write(conn, npcs, spawns, wanted, Zones(questie, spawns, instance_zones(world), quest_zones))
+    with conn:  # Drift captured before its core line existed applies now
+        retried = ingest.retry_drift(conn)
     gossip.update_patterns(conn)
-    return {"npcs": len(npcs), "lines": len(wanted), "quests": len(live), "dropped": dict(dropped)}
+    return {"npcs": len(npcs), "lines": len(wanted), "quests": len(live), "dropped": dict(dropped),
+            "drift_retried": retried}
 
 
 def _write(conn, npcs, spawns, wanted, zones: Zones):
@@ -427,13 +430,38 @@ def _write(conn, npcs, spawns, wanted, zones: Zones):
     conn.executemany("INSERT INTO spawns (npc_id, map, zone, x, y, z) VALUES (?, ?, ?, ?, ?, ?)", rows)
     conn.executemany("INSERT INTO npc_issues VALUES (?, ?, ?)", list(dict.fromkeys(issues)))
 
-    existing = {}
-    for r in conn.execute("SELECT id, type, quest_id, npc_id, player_gender, raw_text FROM lines WHERE source = 'core'"):
-        existing[(r[1], r[2], r[3], r[4], r[5])] = r[0]
+    _write_lines(conn, wanted)
+
+
+def _write_lines(conn, wanted):
+    """Reconcile core lines with the Source Data, keyed on the wording they were extracted from (`source_text`).
+
+    A drifted line (Capture replaced its raw_text) keeps its captured wording while the Source Data is unchanged. When
+    the Source Data catches up (its new wording hashes to the captured text), the drifted line adopts it and is no
+    longer drifted, rather than a duplicate line being added."""
+    existing, drifted = {}, defaultdict(list)
+    for r in conn.execute("SELECT id, type, quest_id, npc_id, player_gender, raw_text, source_text, text_hash"
+                          " FROM lines WHERE source = 'core'"):
+        source_text = r["source_text"] if r["source_text"] is not None else r["raw_text"]
+        existing[(r["type"], r["quest_id"], r["npc_id"], r["player_gender"], source_text)] = r["id"]
+        if source_text != r["raw_text"]:
+            drifted[(r["type"], r["quest_id"], r["npc_id"], r["player_gender"])].append((r["id"], r["text_hash"]))
+    new, adopted = [], set()
+    for k in wanted:
+        if k in existing:
+            continue
+        hash_ = drift.text_hash(k[4], k[3])
+        caught_up = next((i for i, h in drifted.get(k[:4], []) if h == hash_ and i not in adopted), None)
+        if caught_up is None:
+            new.append((*k, text.prepare(k[4], k[3]), hash_, k[4]))
+            continue
+        conn.execute("UPDATE lines SET raw_text = ?, tts_text = ?, text_hash = ?, source_text = ? WHERE id = ?",
+                     (k[4], text.prepare(k[4], k[3]), hash_, k[4], caught_up))
+        conn.execute("DELETE FROM line_issues WHERE line_id = ? AND issue = 'untokenised'", (caught_up,))
+        adopted.add(caught_up)
     conn.executemany(
-        "INSERT INTO lines (type, quest_id, npc_id, player_gender, raw_text, tts_text, text_hash)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?)",
-        [(*k, text.prepare(k[4], k[3]), drift.text_hash(k[4], k[3])) for k in wanted if k not in existing])
-    stale = [(i,) for k, i in existing.items() if k not in wanted]  # gone from the Source Data
+        "INSERT INTO lines (type, quest_id, npc_id, player_gender, raw_text, tts_text, text_hash, source_text)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)", new)
+    stale = [(i,) for k, i in existing.items() if k not in wanted and i not in adopted]  # gone from the Source Data
     conn.executemany("DELETE FROM lines WHERE id = ? AND id NOT IN (SELECT line_id FROM audio)", stale)
     conn.commit()
