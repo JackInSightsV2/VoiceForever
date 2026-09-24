@@ -50,6 +50,8 @@ CREATE TABLE IF NOT EXISTS review_actions (
   id INTEGER PRIMARY KEY, action TEXT NOT NULL, target TEXT, payload TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, consumed_at TEXT
 );
+-- Resolution flags for review: unresolved race/gender, mixed displays, defaulted gender, missing spawn/zone.
+CREATE TABLE IF NOT EXISTS npc_issues (npc_id INTEGER, issue TEXT, detail TEXT);
 """
 
 
