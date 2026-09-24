@@ -275,15 +275,15 @@ The **Core Addon** listens for quest and gossip interactions, looks up the match
 
 **Playback**
 
-- `PlaySoundFile(path, "Dialog")` returns a handle. Keep one active handle, and `StopSound(handle)` on a new line, `GOSSIP_CLOSED`, `QUEST_FINISHED`, or walking away.
-- Settings: volume through the Dialog channel, per-type toggles, auto-play on or off, a replay button on the quest frame, and English-audio-on-non-English-clients (defaults on).
+- `PlaySoundFile(path, "Dialog")` returns a handle. Keep one active handle, and `StopSound(handle)` on a new line (even one without audio), when its own window closes (`QUEST_FINISHED`/QuestFrame hide, `GOSSIP_CLOSED`/GossipFrame hide), or on walking away: while a line plays, every 0.5 s check that the `npc` unit is unchanged and `CheckInteractDistance("npc", 3)` holds. The distance check is skipped in combat.
+- Settings (`VoiceForeverDB.settings`, versioned and migrated, in the Settings panel and `/vf`): volume, per-type toggles (detail, progress, completion, greeting, gossip, Narrator), auto-play, a replay button on the quest and gossip frames, and English audio on non-English clients (on by default; Quest Text only). Volume is the game's Dialog volume CVar (`Sound_DialogVolume`), because `PlaySoundFile` has no per-sound volume. Toggles and auto-play only control automatic playback; the replay button always plays.
 
 **Locales.** Quest Text audio plays in English on every locale, since lookup is by quest ID. Gossip is voiced on English clients only.
 
 **Packaging and distribution**
 
 - **Core Addon:** events, lookup index, Drift hashing, Capture, settings. No audio. Published on CurseForge and Wago.
-- **Voice Packs:** one addon per faction and level band (e.g. Alliance 1–10, Horde 1–10, 10–20, …), each holding the audio plus its slice of the lookup index. Published on CurseForge and Wago alongside the Core Addon, so addon managers handle updates. Players install only the packs they need.
+- **Voice Packs:** one addon per faction (Alliance, Horde, Neutral) and level band (1–10, 10–20, …, 50–60), each holding the audio plus its slice of the lookup index. Assignment rules: ADR-0003. `vo package` builds every pack that has audio (or `--pack`) and reports lines per pack. Published on CurseForge and Wago alongside the Core Addon, so addon managers handle updates. Players install only the packs they need.
 - The client only sees files that existed at launch. After installing or updating packs, restart the game; `/reload` isn't enough.
 
 ## Milestones and QA
