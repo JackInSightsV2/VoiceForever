@@ -59,7 +59,22 @@ CREATE TABLE IF NOT EXISTS runs (
   started_at TEXT, last_heartbeat TEXT, ended_at TEXT,
   status TEXT NOT NULL DEFAULT 'running', until TEXT, summary TEXT, error TEXT
 );
+-- Line flags for review, e.g. Capture text whose player name couldn't be re-tokenised.
+CREATE TABLE IF NOT EXISTS line_issues (line_id INTEGER, issue TEXT, detail TEXT);
+-- A line's previous text, kept when Capture (Drift) replaces it.
+CREATE TABLE IF NOT EXISTS line_history (
+  line_id INTEGER, raw_text TEXT, tts_text TEXT, text_hash TEXT, reason TEXT, capture_id INTEGER,
+  changed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 """
+
+# Columns added after a table was first created: (table, column, type). connect() adds any that are missing.
+MIGRATIONS = [
+    ("capture", "kind", "TEXT"),            # miss | drift
+    ("capture", "expected_hash", "TEXT"),   # Drift: the pack's hash the displayed text didn't match
+    ("capture", "guid_type", "TEXT"),       # Creature, Vehicle, GameObject, ...
+    ("capture", "record_key", "TEXT"),      # de-duplication key across uploads
+]
 
 
 def connect(path: Path) -> sqlite3.Connection:
@@ -69,4 +84,8 @@ def connect(path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=10000")
     conn.executescript(SCHEMA)
+    for table, column, kind in MIGRATIONS:
+        if column not in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS capture_record_key ON capture (record_key)")
     return conn
