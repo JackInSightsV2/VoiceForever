@@ -4,26 +4,29 @@ Sep 24, 2026 · @Stephen Henry
 
 ## Overview
 
-Fully voice every line of WoW Classic (1.12) dialogue with local TTS, pre-generated offline and shipped as a client addon. Every NPC gets its own consistent voice, and NPCs a player meets close together never sound alike.
+Voice every quest and gossip line of **World of Warcraft: Forever** with local TTS, pre-generated offline and shipped as a free public addon. Forever is Blizzard's level-60 branch of WoW set in the original 2004 world, running on the retail engine and addon API (launch 4 Nov 2026). Every NPC gets its own consistent voice, and Neighbours never sound alike. Terms in **bold** are defined in `CONTEXT.md`.
 
 **Key decisions**
 
-- **Pre-generated only.** No runtime TTS. All audio is built offline and shipped as files. Fully automated with one human gate: approving the race and gender base voices. Everything after that runs unattended overnight.
-- **Unique voice per NPC.** Named story NPCs get hand-crafted voices; all others get generated ones.
+- **Pre-generated only.** No runtime TTS. All audio is built offline and shipped as files. Fully automated apart from one **Approval Gate**: approving the race and gender **Archetypes** and the top Lexicon names. Everything after that runs unattended overnight.
+- **Unique voice per NPC.** Every NPC gets an **NPC Voice** derived automatically from an approved Archetype. There is no per-NPC human step.
+- **Core Content first.** v1 voices the original world from the **Source Data**. **Forever Content** (new quests, zones, the Skyborne race) is added incrementally from in-game **Capture**.
 - **Storage is not a constraint.** Up to \~10 GB is acceptable, so encode for quality and generate shared lines per NPC.
-- **Local generation** on an M5 Max (128 GB) with open models. No cloud TTS.
-- **Immersion rule.** NPCs likely to be met within \~30 minutes of each other must sound clearly different, enforced offline via a neighbour graph and speaker-embedding distance.
+- **Local generation** on an M5 Max (128 GB) with open models. No cloud TTS. The addon is free, so non-commercial model licences (e.g. F5-TTS) are acceptable.
+- **Immersion rule.** Neighbours (nearby spawns or a shared quest chain) must sound clearly different, enforced offline via speaker-embedding distance.
 
 **Scope**
 
 | In | Out |
 | --- | --- |
-| Quest text (greeting, detail, progress, completion) | Beast and grunt-only mobs (murlocs, animals) |
-| NPC gossip | Player characters |
-| Scripted say, yell, whisper and emote lines | Retail or later expansion content |
-| Books, plaques and page text (narrator) | Runtime or live TTS |
+| Quest Text (detail, progress, completion) | Ambient Lines: say, yell, whisper, emote |
+| Gossip, including the multi-quest greeting | Page Text: books, plaques, readable items |
+| Quests from objects and items (Narrator) | Beast and grunt-only mobs, player characters |
+| Forever Content, incrementally via Capture | Runtime or live TTS |
 
-Estimated corpus: roughly 0.6–1M words, about 110 hours of speech (approximate, to be confirmed by the extraction count).
+Estimated corpus: to be confirmed by the extraction count. It is smaller than the original \~110 h estimate now that Ambient Lines and Page Text are out.
+
+**Release target:** on 4 Nov 2026, ship the Core Addon (with Capture) plus Voice Packs for levels 1–10, both factions. Further level bands follow as Voice Packs.
 
 ## Architecture
 
@@ -31,58 +34,59 @@ Six offline stages feed one addon. Every stage writes to a single SQLite databas
 
 ```mermaid
 flowchart LR
-  A[1. Extract<br/>DB + DBC + Questie] --> B[2. Resolve<br/>race / gender / zone]
-  B --> C[3. Text prep<br/>tokens, clean, hash]
-  B --> D[4. Voice design<br/>per-NPC voice + graph]
+  A[1. Extract<br/>BroadcastText + VMaNGOS + DBC + Capture] --> B[2. Resolve<br/>race / gender / zone]
+  B --> C[3. Text prep<br/>tokens, clean, lexicon]
+  B --> D[4. Voice design<br/>per-NPC voice + neighbours]
   C --> E[5. Generate audio<br/>TTS + post-process]
   D --> E
-  E --> F[6. Package<br/>addon + audio packs]
+  E --> F[6. Package<br/>Core Addon + Voice Packs]
 ```
 
-Stages 3 and 4 are independent and can run in parallel. Stage 5 is the long pole. It is resumable and keyed on `(npc_id, text_hash, voice_id)`, so a voice or text change regenerates only the affected lines.
+Stages 3 and 4 are independent and can run in parallel. Stage 5 is the long pole. It is resumable and keyed on `(line_id, text_hash, voice_id)`, so a voice or text change regenerates only the affected lines.
 
 **Tooling:** Python for the pipeline, `mlx-audio` and PyTorch (MPS) for models, SQLite for state, and Lua for the addon.
 
-## Automation and approval gate
+## Automation and Approval Gate
 
-The only human step is approving the base voices for each race and gender. After approval, one command runs the whole pipeline unattended, and you get a report in the morning.
+The only human step is the Approval Gate. After approval, one command runs the whole pipeline unattended, and you get a report in the morning.
 
 ```mermaid
 flowchart LR
-  A[vo prepare<br/>extract + base voices] --> B[Review page<br/>listen, approve]
+  A[vo prepare<br/>extract + candidates + lexicon draft] --> B[Approval page<br/>listen, approve]
   B -- reject + note --> A
   B -- all approved --> C[vo run<br/>overnight, unattended]
   C --> D[Morning report]
 ```
 
-**1. `vo prepare`** runs extraction and text prep, then generates the **base voice set**:
+**1. `vo prepare`** runs extraction and text prep, then generates:
 
-- For each race and gender, 3 candidate archetypes: roughly 20 races × 2 × 3 ≈ 120 voices.
-- Each archetype renders the same 3 test lines: a greeting, a quest-detail passage, and a yell.
-- The narrator voice is included as its own entry.
+- **Candidates:** 3 per race and gender, roughly 20 races × 2 × 3 ≈ 120 voices. Each renders the same 2 test lines: a greeting and a quest-detail passage.
+- **The Narrator** as its own entry.
+- **Lexicon drafts** for the top \~300 proper nouns by line count, each with a rendered sample.
 
-**2. Review page.** The dashboard's Approval page lists every race and gender, with audio players for each candidate. Per candidate you can **Approve**, **Reject**, or **Regenerate with a note** (e.g. "deeper, less theatrical"). The note is appended to that archetype's prompt. You need at least one approved archetype per race and gender. Approval writes a locked `approved_voices.json`, and `vo run` refuses to start without it.
+**2. Approval page.** Per Candidate you can **Approve**, **Reject**, or **Regenerate with a note** (e.g. "deeper, less theatrical"). The note is appended to that Candidate's prompt. You need at least one approved Archetype per race and gender. Per Lexicon entry you can accept or correct the spelling. Approval writes a locked `approved_voices.json` and `lexicon.json`, and `vo run` refuses to start without them. Names outside the top 300 are drafted automatically and checked by ASR.
 
 **3. `vo run`** is fully unattended:
 
 - It is a job queue in SQLite, checkpointed per line, so a crash or reboot resumes where it stopped.
 - A failed line (ASR check, model error) is retried up to 3 times with a new seed, then quarantined. Failures never block the run.
 - It keeps the Mac awake with `caffeinate -dis` for the duration.
-- `--until 07:00` pauses at a set time; the next `vo run` resumes. The full run is about 1–2 days, so expect 1–2 nights.
+- `--until 07:00` pauses at a set time; the next `vo run` resumes.
 - Optional push notification on finish or fatal error (e.g. ntfy).
 
 **4. Morning report.** A static HTML summary showing:
 
-- lines done and remaining, coverage per zone, and ETA;
+- lines done and remaining, coverage per zone and Voice Pack, and ETA;
 - quarantined lines with their reasons;
-- remaining voice-separation violations;
+- remaining Neighbour-separation violations;
+- Drift and new Capture lines ingested since the last run;
 - a few random sample clips per zone, for optional spot-checking.
 
 Nothing in the report requires action. Quarantined lines are retried automatically on the next run.
 
 ## Dashboard
 
-A local web dashboard is the single place to approve base voices, watch the run, track coverage, and spot-check audio. It reads the pipeline's SQLite live, and the morning report is simply its overview page.
+A local web dashboard is the single place to approve Archetypes and the Lexicon, watch the run, track coverage, and spot-check audio. It reads the pipeline's SQLite live, and the morning report is simply its overview page. All seven pages are built before the Northshire slice.
 
 **Stack.** `vo dashboard` serves a Bun app on localhost using `bun:sqlite`, with no other dependencies. SQLite runs in WAL mode, so the dashboard reads while `vo run` writes. Pages refresh every 5 s via server-sent events. It can optionally be exposed over Tailscale to check from a phone.
 
@@ -91,11 +95,11 @@ A local web dashboard is the single place to approve base voices, watch the run,
 | Page | Shows | Actions |
 | --- | --- | --- |
 | Overview | Run state (running, paused, until), overall progress, current stage, throughput (lines/min, audio hours per hour), ETA, per-worker status, recent errors, run history | Pause, resume, set `--until` |
-| Approval | Every race and gender with candidate archetypes and their 3 test lines | Approve, reject, regenerate with note |
-| Coverage | Per-zone table: total, done, failed and quarantined lines, plus % complete; drill down to zone, then NPC | — |
-| NPC browser | Search by name, zone, race or role. Each NPC shows race, gender, archetype, reference clip, and every line with player, status and ASR score | Flag voice, regenerate voice, regenerate line |
+| Approval | Every race and gender with its Candidates and test lines; the Narrator; the top Lexicon entries with samples | Approve, reject, regenerate with note; accept or correct spelling |
+| Coverage | Per-zone and per-Voice-Pack table: total, done, failed and quarantined lines, plus % complete; drill down to zone, then NPC | — |
+| NPC browser | Search by name, zone, race or role. Each NPC shows race, gender, Archetype, reference clip, and every line with player, status and ASR score | Flag voice, regenerate voice, regenerate line |
 | Spot-check | Random line player, weighted toward newly generated lines, named NPCs, and low ASR scores; keyboard-driven (space plays, J/K rates, N next) | Thumbs up/down, flag |
-| Separation | Closest same-race voice pairs per hub, with both clips side by side | Re-roll either voice |
+| Separation | Closest same-race Neighbour pairs, with both clips side by side | Re-roll either voice |
 | Quarantine | Failed lines with reason and retry count | Retry, edit TTS text, skip |
 
 **How actions work.** The dashboard never edits audio directly. Every action writes a row to a `review_actions` table, and the next `vo run` consumes that queue first. This keeps the run the only writer of audio, so the dashboard is safe to use mid-run.
@@ -104,27 +108,29 @@ A local web dashboard is the single place to approve base voices, watch the run,
 
 ## Data extraction
 
-All source data is public. The work is joining it, not collecting it.
+All Source Data is public. The work is joining it, not collecting it.
 
 **Sources**
 
 | Need | Source |
 | --- | --- |
-| NPCs: name, subname, faction, flags, display IDs | VMaNGOS DB (1.12-accurate) `creature_template`; CMaNGOS classic-db as a cross-check |
-| Spawn positions | `creature` table (map, x, y, z) |
-| Zone IDs, quest start and end NPCs | Questie npcData / questData Lua tables |
-| Quest text | `quest_template` (Details, Objectives, RequestItemsText, OfferRewardText) |
-| Gossip | `gossip_menu` → `npc_text` / `broadcast_text` |
-| Scripted lines | `script_texts`, `dbscript_string`, `creature_text` (whichever the chosen DB uses) |
-| Books and plaques | `page_text`, linked from items and game objects |
-| Race and gender | `CreatureDisplayInfo` → `CreatureDisplayInfoExtra`, plus `CreatureModelData` model paths (wago.tools CSV exports for the Classic build) |
+| Gossip text | Blizzard `BroadcastText` (wago.tools DB2 export). Use Classic Era 1.15.9 until Forever's build is published, then switch |
+| Gossip menus per NPC | VMaNGOS `gossip_menu` → `npc_text`, mapped to `BroadcastText` IDs |
+| Quest text | VMaNGOS `quest_template` (Details, Objectives, RequestItemsText, OfferRewardText) |
+| Quest greeting (multi-quest NPCs) | VMaNGOS `quest_greeting` |
+| NPCs: name, subname, faction, flags, display IDs | VMaNGOS `creature_template`; CMaNGOS classic-db as a cross-check |
+| Spawn positions | VMaNGOS `creature` table (map, x, y, z) |
+| Zone IDs, quest start and end NPCs and objects | Questie npcData / questData / objectData Lua tables |
+| Race and gender | `CreatureDisplayInfo` → `CreatureDisplayInfoExtra`, plus `CreatureModelData` model paths (wago.tools DB2 exports) |
+| Forever Content, Drift | Capture records from the Core Addon's SavedVariables |
 
 **Race and gender resolution**
 
 1. For humanoid NPCs with a character model, `CreatureDisplayInfoExtra` gives race and sex directly.
-2. For creature models, parse the `CreatureModelData` path (e.g. `Creature\Ogre\Ogre.mdx`) for race. Gender defaults to the model's; if ambiguous, take it from `$G`-free text context, or flag it for review.
+2. For creature models, parse the `CreatureModelData` path (e.g. `Creature\Ogre\Ogre.mdx`) for race. Gender defaults to the model's; if ambiguous, flag it for review.
 3. For NPCs with several display IDs, voice the most common model. Flag any whose display IDs mix races or genders.
-4. A `manual_overrides` table wins over everything else, covering disguised NPCs, speaking beasts and story characters.
+4. For Capture-only NPCs, resolve through the Forever build's `Creature` DB2 once it is published; until then use the captured `UnitSex` and creature type, and flag them.
+5. A `manual_overrides` table wins over everything else, covering disguised NPCs, speaking beasts and story characters.
 
 **SQLite schema (core)**
 
@@ -136,80 +142,82 @@ CREATE TABLE npcs (
   model TEXT, faction INTEGER,
   role TEXT,                   -- vendor, trainer, quest, guard, story...
   level_min INTEGER, level_max INTEGER,
-  is_named INTEGER DEFAULT 0
+  is_named INTEGER DEFAULT 0,
+  source TEXT                  -- core | capture
 );
 CREATE TABLE spawns (npc_id INTEGER, map INTEGER, zone INTEGER, x REAL, y REAL, z REAL);
 CREATE TABLE lines (
   id INTEGER PRIMARY KEY,
-  npc_id INTEGER,              -- NULL for narrator (books)
-  type TEXT,                   -- quest_detail, gossip, say, yell, whisper, book...
-  source_id INTEGER,           -- quest id, text id, page id
-  raw_text TEXT, tts_text TEXT,
-  variant TEXT,                -- e.g. gender=f, race=dwarf, class=mage
-  text_hash TEXT               -- hash of the client-visible text
+  npc_id INTEGER,              -- NULL for Narrator (object and item quest givers)
+  type TEXT,                   -- quest_detail, quest_progress, quest_complete, quest_greeting, gossip
+  quest_id INTEGER,            -- quest lines only
+  player_gender TEXT,          -- m | f | NULL when the text has no $G
+  raw_text TEXT,               -- as in Source Data, tokens intact
+  tts_text TEXT,               -- cleaned, tokens neutralised, lexicon applied
+  match_pattern TEXT,          -- gossip only: Lua pattern with tokens as wildcards
+  text_hash TEXT,              -- Drift hash of the normalised, token-masked text
+  source TEXT                  -- core | capture
 );
-CREATE TABLE voices (npc_id INTEGER PRIMARY KEY, voice_id TEXT, prompt TEXT, ref_clip TEXT, embedding BLOB);
+CREATE TABLE voices (npc_id INTEGER PRIMARY KEY, voice_id TEXT, archetype TEXT, prompt TEXT, ref_clip TEXT, embedding BLOB);
 CREATE TABLE audio (line_id INTEGER, voice_id TEXT, path TEXT, duration_s REAL, status TEXT);
+CREATE TABLE capture (id INTEGER PRIMARY KEY, upload_id TEXT, npc_id INTEGER, npc_name TEXT, unit_sex INTEGER, creature_type TEXT,
+  zone INTEGER, x REAL, y REAL, event TEXT, quest_id INTEGER, text TEXT, text_hash TEXT, locale TEXT, seen_at TEXT);
 CREATE TABLE manual_overrides (npc_id INTEGER, field TEXT, value TEXT);
 ```
 
-**Filter:** drop NPCs with no dialogue lines, and beast or grunt types, before voice design.
+**Filter:** drop NPCs with no Quest Text or Gossip, and beast or grunt types, before voice design.
 
 ## Text processing
 
-Every substitution token is expanded into concrete variants at build time. The client then only ever needs to look up an exact, fully rendered string.
+Player-specific tokens are neutralised in the spoken audio, so each line needs at most two variants (player gender).
 
 **Token handling**
 
 | Token | Meaning | Strategy |
 | --- | --- | --- |
 | `$G male:female;` | Player gender | Generate both variants |
-| `$R` / `$r` | Player race | Generate per playable race valid for the quest's faction (4 per faction) |
-| `$C` / `$c` | Player class | Generate per valid class for that race |
-| `$N` / `$n` | Player name | Can't be pre-generated. Default: rewrite to a neutral address ("friend", "adventurer"). Option: splice around the name gap |
+| `$N` / `$n` | Player name | Neutral Address in audio ("friend", "adventurer") |
+| `$R` / `$r` | Player race | Neutral Address in audio |
+| `$C` / `$c` | Player class | Neutral Address in audio |
 | `$B` | Line break | Convert to a pause |
 
-Combining `$R` and `$C` multiplies variants, but only on the minority of lines that use them.
-
-**Lookup key.** The addon hashes the text as the client renders it. The pipeline must reproduce that exact render for every variant: the token-substituted string with `$N` left as the player's name. Hash the template with `$N` masked, and have the addon apply the same mask before hashing.
+The on-screen text keeps the real name, race and class; only the audio is neutral. This is future-proof against Forever's new race and any new race/class combinations.
 
 **Cleaning for TTS**
 
 - Strip colour codes and formatting (`|cff...|r`, `<...>`).
 - Expand abbreviations and numbers ("10g" becomes "ten gold").
-- Add a pronunciation lexicon for lore names such as Thrall, Kel'Thuzad, Quel'Thalas and Ahn'Qiraj. This is the biggest single quality lever.
-- Emote lines (`CHAT_MSG_MONSTER_EMOTE`) are narration about the NPC, so route them to the narrator voice or skip them.
+- Apply the Lexicon for lore names such as Thrall, Kel'Thuzad, Quel'Thalas and Ahn'Qiraj. This is the biggest single quality lever.
+- Choose Neutral Address words that read naturally in context (e.g. "Greetings, $c" → "Greetings, friend").
 
 **Dedupe.** Identical `(npc_id, tts_text)` pairs are generated once. Lines are **not** deduped across NPCs, since each NPC has its own voice.
 
 ## Voice design
 
-Every NPC with dialogue gets a unique voice, derived automatically from an approved base voice for its race and gender. Each voice must stay close enough to its base to sound like the approved race, and far enough from its neighbours to sound distinct.
+Every NPC with dialogue gets a unique NPC Voice, derived automatically from an approved Archetype for its race and gender. Each voice must stay close enough to its Archetype to sound like the approved race, and far enough from its Neighbours to sound distinct.
 
-**1. Voice prompt per NPC.** Start from an approved base archetype for the NPC's race and gender, then add bounded variation. If a race and gender has several approved archetypes, pick one deterministically by NPC ID:
+**1. Voice prompt per NPC.** Start from an approved Archetype for the NPC's race and gender, then add bounded variation. If a race and gender has several approved Archetypes, pick one deterministically by NPC ID:
 
 - **Base:** race, gender, role (guard, innkeeper, trainer, noble, bandit), faction, and level band as an age proxy.
-- **Race style guide:** one auto-drafted paragraph per race, refined through notes on the review page (e.g. dwarf: deep, gravelly, broad northern accent; troll: Caribbean-inflected, drawn-out vowels).
+- **Race style guide:** one auto-drafted paragraph per race, refined through notes on the Approval page (e.g. dwarf: deep, gravelly, broad northern accent; troll: Caribbean-inflected, drawn-out vowels).
 - **Random traits:** pitch, pace, rasp, breathiness, age, and accent strength. The seed is the NPC ID, so rebuilds are deterministic.
 
-**2. Reference clip.** Render a \~10–15 s neutral sentence with a voice-design model driven by the prompt. That clip is the NPC's voice identity for cloning in stage 5.
+**2. Reference clip.** Render a \~10–15 s neutral sentence with a voice-design model driven by the prompt. That clip is the NPC Voice's identity for cloning in stage 5.
 
 **3. Embedding.** Embed each reference clip with a speaker-verification model (ECAPA-TDNN or WavLM-SV) and store it in `voices.embedding`.
 
-**4. Neighbour graph.** Nodes are NPCs. Weighted edges connect NPCs a player is likely to meet close together:
+**4. Neighbours.** Two NPCs are Neighbours if either holds:
 
-| Edge | Weight |
-| --- | --- |
-| Same quest chain (`PrevQuestId`/`NextQuestId`, start/end links) | Strong |
-| Spawns within N yards (tune N; start \~150 yd) | Strong |
-| Same quest hub or city district | Medium |
-| Adjacent via flight path, or same zone | Weak |
+- their spawns are within N yards of each other (tune N; start \~150 yd), or
+- they share a quest chain (`PrevQuestId`/`NextQuestId`, or one starts a quest the other ends).
 
-**5. Two-sided constraint.** Every NPC voice must satisfy two checks. Its distance to its **base archetype** must stay below a ceiling, so it still sounds like the voice you approved. Its distance to each **neighbour** must stay above a floor scaled by edge weight, so it sounds distinct. Violations are resolved by re-rolling traits and regenerating the reference clip, up to a cap. Anything still failing is listed in the morning report and does not block the run.
+No edge weights: spawn proximity already covers hubs and city districts.
 
-**6. Named NPCs (automated).** Named and story NPCs (`is_named`) get a wider variation budget, plus prompt hints derived from name, subname and role (e.g. "King" adds regal and measured; "Warchief" adds commanding). They go through the same constraints, with no manual step. Their clips are surfaced first in the morning report's samples.
+**5. Two-sided constraint.** Every NPC Voice must satisfy two checks. Its distance to its **Archetype** must stay below a ceiling, so it still sounds like the voice you approved. Its distance to each **Neighbour** must stay above a single floor, so it sounds distinct. Violations are resolved by re-rolling traits and regenerating the reference clip, up to a cap. Anything still failing is listed in the morning report and does not block the run.
 
-**Narrator.** One fixed voice for books, plaques and emotes. It is excluded from the graph.
+**6. Named NPCs (automated).** Named and story NPCs (`is_named`) get a wider variation budget, plus prompt hints derived from name, subname and role (e.g. "King" adds regal and measured; "Warchief" adds commanding). They go through the same constraints, with no manual step. A voice prompt can still be pinned through `manual_overrides`. Their clips are surfaced first in the morning report's samples.
+
+**Narrator.** One fixed voice for quests that start or end at objects and items (wanted posters, quest-starting items). It is excluded from Neighbours.
 
 ## Audio generation
 
@@ -220,99 +228,102 @@ Lines are generated by a zero-shot cloning model conditioned on each NPC's refer
 | Model | Role | Cloning | Rough speed |
 | --- | --- | --- | --- |
 | Chatterbox | Default for NPC lines: cloning plus emotion/exaggeration control | Yes | A few × realtime |
-| F5-TTS (MLX port) | Alternative default, strong prosody | Yes | A few × realtime |
-| Orpheus 3B | Expressive yells and story NPCs (laugh and sigh tags) | Via fine-tune | \~1–2× realtime |
-| Kokoro 82M | Narrator voice (books, plaques) | No | Tens of × realtime |
+| F5-TTS (MLX port) | Alternative default, strong prosody (CC-BY-NC weights; fine while the addon is free) | Yes | A few × realtime |
+| Orpheus 3B | Expressive story NPCs (laugh and sigh tags) | Via fine-tune | \~1–2× realtime |
+| Kokoro 82M | Narrator voice | No | Tens of × realtime |
 
-**Throughput.** About 110 h of audio, plus per-NPC duplicates of shared gossip and token variants. At \~3× realtime per worker with 3–4 workers in parallel, that's roughly **1–2 days** of wall time. Unified memory is not the limit; GPU contention is, so tune the worker count empirically.
+**Throughput.** At \~3× realtime per worker with 3–4 workers in parallel. Unified memory is not the limit; GPU contention is, so tune the worker count empirically.
 
 **Per-line settings by type**
 
-- **Yell:** higher exaggeration, +3 dB offset.
-- **Whisper:** low exaggeration, −6 dB offset.
 - **Quest completion:** warmer and more upbeat.
 - **Quest progress ("Have you got them yet?"):** short and neutral.
+- **Gossip and greeting:** conversational, the NPC Voice's default delivery.
 
 **Post-processing**
 
 1. Trim leading and trailing silence, leaving about 150 ms.
-2. Loudness-normalise to −16 LUFS integrated, then apply the per-type offset, with a −1 dBTP ceiling.
+2. Loudness-normalise to −16 LUFS integrated, with a −1 dBTP ceiling.
 3. Run automatic QA: compare Whisper ASR output against `tts_text` and regenerate if the word error rate exceeds a threshold. This catches skipped words, hallucinated audio and mispronounced lore names.
 4. Encode as Ogg Vorbis, mono, 48 kHz, \~96–128 kbps. Settle the final bitrate by measuring total size against the 10 GB ceiling.
 
-**Output layout:** `audio/<zoneId>/<npcId>/<textHash>.ogg`, with the path recorded in `audio`.
+**Output layout:** `packs/<voicePack>/<npcId>/<lineId>.ogg` (Narrator lines under `narrator/`), with the path recorded in `audio`.
 
 ## Client addon
 
-A small core addon listens for dialogue events, derives `(npcId, textHash)`, and plays the matching pre-generated file. The audio lives in load-on-demand packs.
+The **Core Addon** listens for quest and gossip interactions, looks up the matching line, and plays the pre-generated file from an installed **Voice Pack**. It targets Forever's retail addon API.
 
-**Events**
+**Events and lookup**
 
-| Event | Text from | NPC from |
+| Event | Text from | Lookup key |
 | --- | --- | --- |
-| `QUEST_GREETING` | `GetGreetingText()` | `UnitGUID("npc")` |
-| `QUEST_DETAIL` | `GetQuestText()` + `GetObjectiveText()` | `UnitGUID("npc")` |
-| `QUEST_PROGRESS` | `GetProgressText()` | `UnitGUID("npc")` |
-| `QUEST_COMPLETE` | `GetRewardText()` | `UnitGUID("npc")` |
-| `GOSSIP_SHOW` | `GetGossipText()` | `UnitGUID("npc")` |
-| `CHAT_MSG_MONSTER_SAY` / `YELL` / `WHISPER` | Event arg 1 | Sender GUID in event args |
-| `ITEM_TEXT_READY` | `ItemTextGetText()` per page | Narrator |
+| `QUEST_DETAIL` | `GetQuestText()` + `GetObjectiveText()` | `(GetQuestID(), "detail", player gender)` |
+| `QUEST_PROGRESS` | `GetProgressText()` | `(GetQuestID(), "progress", player gender)` |
+| `QUEST_COMPLETE` | `GetRewardText()` | `(GetQuestID(), "complete", player gender)` |
+| `QUEST_GREETING` | `GetGreetingText()` | NPC ID + template match |
+| `GOSSIP_SHOW` | `C_GossipInfo.GetText()` | NPC ID + template match |
 
-The creature entry ID is the 6th field of a `Creature-…` GUID. Quest items and game-object quest givers use the object ID, with the narrator voice as fallback.
+- **NPC ID** is the 6th field of the `Creature-…` GUID from `UnitGUID("npc")`. Quests from objects and items resolve by quest ID and play the Narrator line.
+- **Quest Text** never depends on wording, so there is no text-hash parity to maintain for lookup.
+- **Gossip template matching.** Each NPC's entry in the index holds its gossip templates as Lua patterns, with tokens as wildcards. The displayed text is matched against that NPC's handful of patterns. English clients only; other locales skip Gossip.
+
+**Drift.** Each Quest Text entry also carries a `text_hash` of its normalised, token-masked text (FNV-1a 32-bit in Lua and Python, with a shared test-vector file). The addon re-masks the player's name, race and class in the displayed text, hashes it, and on mismatch **still plays the audio** but records the line as Drift through Capture. A false Drift flag (e.g. a literal "Dwarf" in the text) is harmless, since Drift is only logged.
+
+**Capture.** Always on, capped at \~5,000 records and de-duplicated by hash, stored in SavedVariables. Every lookup miss and every Drift is recorded with NPC ID, name, `UnitSex`, creature type, zone, map position, event, quest ID, locale and the raw displayed text. Players upload their SavedVariables file to a public upload page; the pipeline ingests it as a second source for Forever Content. A `/vf export` hint tells players where the file is.
 
 **Playback**
 
 - `PlaySoundFile(path, "Dialog")` returns a handle. Keep one active handle, and `StopSound(handle)` on a new line, `GOSSIP_CLOSED`, `QUEST_FINISHED`, or walking away.
-- For monster say/yell, only play if the NPC is within range; skip overlapping chatter from the same NPC.
-- Settings: volume through the Dialog channel, per-type toggles, auto-play on or off, and a replay button on the quest frame.
+- Settings: volume through the Dialog channel, per-type toggles, auto-play on or off, a replay button on the quest frame, and English-audio-on-non-English-clients (defaults on).
 
-**Hashing.** Implement the same non-cryptographic hash (e.g. FNV-1a 32-bit) in pure Lua and in Python. Normalise identically on both sides: strip colour codes, collapse whitespace, and mask the player name. A shared test vector file guards this; it's the most likely source of silent misses.
+**Locales.** Quest Text audio plays in English on every locale, since lookup is by quest ID. Gossip is voiced on English clients only.
 
-**Packaging**
+**Packaging and distribution**
 
-- **Core addon:** event handling, hashing, settings, and an index from `npcId` to pack.
-- **Load-on-demand packs** per zone group (e.g. Elwynn/Westfall/Redridge). Each holds the audio plus a Lua lookup `[npcId][textHash] = file`. Only the current zone's pack is loaded, which keeps Lua memory small.
+- **Core Addon:** events, lookup index, Drift hashing, Capture, settings. No audio. Published on CurseForge and Wago.
+- **Voice Packs:** one addon per faction and level band (e.g. Alliance 1–10, Horde 1–10, 10–20, …), each holding the audio plus its slice of the lookup index. Published on CurseForge and Wago alongside the Core Addon, so addon managers handle updates. Players install only the packs they need.
 - The client only sees files that existed at launch. After installing or updating packs, restart the game; `/reload` isn't enough.
-
-**Fallback.** On a lookup miss, log `(npcId, textHash, text)` to SavedVariables. Feed that file back into the pipeline to find missing or mis-hashed lines.
 
 ## Milestones and QA
 
-The first playable slice is one starting zone end to end. It proves the whole pipeline before paying for the full 1–2 day generation run.
+The first playable slice is one starting zone end to end. It proves the whole pipeline before the full generation run. Launch day (4 Nov 2026) ships the 1–10 Voice Packs.
 
 | # | Milestone | Done when |
 | --- | --- | --- |
-| 1 | Extraction | SQLite holds every NPC with race, gender, zone and role; real word and line counts are known; under 1% of NPCs are unresolved |
+| 1 | Extraction | SQLite holds every NPC with race, gender, zone and role, plus all Quest Text and Gossip; real word and line counts are known; under 1% of NPCs are unresolved |
 | 2 | Model bake-off | Chatterbox, F5 and Orpheus compared on \~50 lines across 5 races; default model and settings chosen |
-| 3 | Orchestration | `vo prepare` / `vo run` work end to end on a single zone; resume after a kill; retries and quarantine work; dashboard shows live progress and plays audio |
-| 4 | Vertical slice: Northshire | Every Northshire line voiced by `vo run` with no manual steps; addon plays it in-game with zero lookup misses |
-| 5 | Base voice approval | Review page built; every race and gender has at least one approved archetype; `approved_voices.json` locked |
-| 6 | Overnight full run | `vo run` completes all lines over 1–2 nights, passing ASR QA, packaged into packs |
-| 7 | Playtest | Starting zones played through on each race; miss log fed back and a follow-up `vo run` clears the gaps |
+| 3 | Orchestration and dashboard | `vo prepare` / `vo run` work end to end on a single zone; resume after a kill; retries and quarantine work; all seven dashboard pages work |
+| 4 | Vertical slice: Northshire | Every Northshire line voiced by `vo run` with no manual steps; the Core Addon plays it in Forever with zero lookup misses; Capture records misses and Drift |
+| 5 | Approval Gate | Every race and gender has at least one approved Archetype; top Lexicon names approved; `approved_voices.json` and `lexicon.json` locked |
+| 6 | Launch: levels 1–10 | Core Addon and 1–10 Voice Packs for both factions published on CurseForge and Wago by 4 Nov 2026 |
+| 7 | Remaining Core Content | `vo run` completes all level bands, passing ASR QA, published as Voice Packs |
+| 8 | Capture loop | Upload page live; uploaded Capture ingested; Forever Content and Drift regenerated by a follow-up `vo run` |
 
 **QA checks**
 
-- **Coverage:** voiced lines ÷ extracted lines, per zone.
+- **Coverage:** voiced lines ÷ extracted lines, per zone and per Voice Pack.
 - **ASR word error rate** per line, with auto-regeneration above threshold.
-- **Hash parity:** Lua and Python produce identical hashes on the shared test vectors.
-- **In-game miss log:** SavedVariables misses from playtesting feed back into the pipeline.
-- **Voice separation:** a report of the closest same-race pairs per hub, plus a spot-check by ear in capitals.
+- **Hash parity:** Lua and Python produce identical Drift hashes on the shared test vectors.
+- **Gossip matching:** every gossip template matches its own rendered text for each player gender, name, race and class in a test harness.
+- **Capture:** misses and Drift from playtesting and uploads feed back into the pipeline.
+- **Voice separation:** a report of the closest same-race Neighbour pairs, plus a spot-check by ear in capitals.
 
 ## Open questions and risks
 
-- [ ] **`$N` handling:** rewrite to a neutral address, or splice around a gap? Rewriting is simpler; splicing keeps the original wording.
 - [ ] **Voice-design model:** which model turns text prompts into reference clips reliably for fantasy races (ogre, troll, tauren)? Needs a spike before milestone 4.
-- [ ] **Separation threshold:** what embedding distance actually sounds different to a player? Calibrate once on \~20 pairs on the review page, then fix it for all runs.
-- [ ] **Edge radius and weights:** start at \~150 yd and tune against a real 30-minute play route.
-- [ ] **Game-object quest givers** (wanted posters, books that start quests): narrator voice, or a dedicated "notice board" voice?
+- [ ] **Separation threshold:** what embedding distance actually sounds different to a player? Calibrate once on \~20 pairs on the Approval page, then fix it for all runs.
+- [ ] **Neighbour radius:** start at \~150 yd and tune against a real 30-minute play route.
+- [ ] **Forever build on wago.tools:** not yet listed. Switch `BroadcastText` and `Creature` sources when it appears.
+- [ ] **Capture upload trust:** how uploaded Capture is validated before it becomes audio. Deferred until Forever Content collection starts.
 
 **Risks**
 
 | Risk | Impact | Mitigation |
 | --- | --- | --- |
-| Hash mismatch between client text and pipeline text | Silent missing audio | Shared test vectors, plus the in-game miss log |
+| Forever rewords original Quest Text | Audio doesn't match on-screen text | Drift hash flags it through Capture; next `vo run` regenerates |
+| Gossip template fails to match | Silent missing Gossip | Template test harness, plus Capture of misses |
 | Race or gender misresolved from models | Wrong-sounding NPCs | Mixed-model flags, manual overrides, and a review of the top 500 NPCs by quest count |
-| Lore-name mispronunciation | Breaks immersion | Pronunciation lexicon, plus ASR checks on name-heavy lines |
+| Lore-name mispronunciation | Breaks immersion | Lexicon (top names human-approved), plus ASR checks on name-heavy lines |
 | TTS artefacts on long lines | Garbled audio | Sentence-level chunking with crossfades, plus ASR QA |
-| Generated voices drift toward generic | Reduces the immersion goal | Race style guides, plus hand-crafted voices for story NPCs |
-| Client text differs from DB text (later patches, localisation) | Misses | Target enUS 1.12 data only; the miss log catches drift |
+| Generated voices drift toward generic | Reduces the immersion goal | Race style guides, wider budget for named NPCs, and `manual_overrides` for voice prompts |
+| Forever Content unknown to Source Data | Misses on new quests and zones | Capture from players, ingested incrementally |
