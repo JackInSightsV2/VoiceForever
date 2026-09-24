@@ -34,6 +34,22 @@ CREATE TABLE IF NOT EXISTS capture (
   zone INTEGER, x REAL, y REAL, event TEXT, quest_id INTEGER, text TEXT, text_hash TEXT, locale TEXT, seen_at TEXT
 );
 CREATE TABLE IF NOT EXISTS manual_overrides (npc_id INTEGER, field TEXT, value TEXT);
+-- vo run's queue: one job per line and voice; tts_hash is the text it was queued for, so a text change requeues it.
+-- status: pending | running | done | quarantined | skipped. attempts count failures since last queued (3 -> quarantined);
+-- tries count every render ever, and seed each new take.
+CREATE TABLE IF NOT EXISTS jobs (
+  line_id INTEGER, voice_id TEXT, tts_hash TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  attempts INTEGER NOT NULL DEFAULT 0, tries INTEGER NOT NULL DEFAULT 0,
+  reason TEXT, wer REAL, transcript TEXT, updated_at TEXT,
+  PRIMARY KEY (line_id, voice_id)
+);
+CREATE INDEX IF NOT EXISTS jobs_status ON jobs (status);
+-- The dashboard's queue of human actions, consumed by vo run before it generates.
+CREATE TABLE IF NOT EXISTS review_actions (
+  id INTEGER PRIMARY KEY, action TEXT NOT NULL, target TEXT, payload TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, consumed_at TEXT
+);
 """
 
 
@@ -42,5 +58,6 @@ def connect(path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=10000")
     conn.executescript(SCHEMA)
     return conn
