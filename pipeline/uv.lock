@@ -1499,6 +1499,41 @@ wheels = [
 ]
 
 [[package]]
+name = "pedalboard"
+version = "0.9.25"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3e/50/740ae3db576bce91216ce2e6dc2841c18bd1b2dada4d8997fe518b767204/pedalboard-0.9.25-cp312-cp312-macosx_10_14_universal2.whl", hash = "sha256:7d79497a9254719d428d668191661dbf5786f012dc49a1f9f14ecf35d03694d5", size = 4795854, upload-time = "2026-09-09T21:07:08.712Z" },
+    { url = "https://files.pythonhosted.org/packages/a2/f6/ccfbe6738be1fbe37f5173f62f518ea2a3f0b5480a2bcd1c7e4e03fa2a6d/pedalboard-0.9.25-cp312-cp312-macosx_10_14_x86_64.whl", hash = "sha256:7e2e578ed3de5f4a4684e6ad7e7bce081a8ada2a0c82b2c71072d1cf3cff2c4e", size = 2669151, upload-time = "2026-09-09T21:07:10.366Z" },
+    { url = "https://files.pythonhosted.org/packages/73/b8/31e22a85999d3bbc3c553e956d79e4f946350ba8a130258659fce39e6373/pedalboard-0.9.25-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:d0dd0bbdea2c6c7f4aac2ba8c8269c17bf81447c350c94b1413a100002c5a7e0", size = 2469362, upload-time = "2026-09-09T21:07:11.659Z" },
+    { url = "https://files.pythonhosted.org/packages/0f/bb/d9a44f8b890b2d9988e77141cc4800b1ebe6811f90e057030c4977b0df2c/pedalboard-0.9.25-cp312-cp312-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:289c64daa6492ac121a10bc2f0b4d13ad756e1e696ced6c0489e50980c98e2f3", size = 4908646, upload-time = "2026-09-09T21:07:12.994Z" },
+    { url = "https://files.pythonhosted.org/packages/37/cd/348304b1bc697a935d4bf1dde1663657e0fdd182bfe7ed5bac2e0b859974/pedalboard-0.9.25-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:fbb3d8c313d0035f054ba98d4fe9600184fa72ac0d3edc4dd338b1dc928f3842", size = 5125486, upload-time = "2026-09-09T21:07:14.36Z" },
+    { url = "https://files.pythonhosted.org/packages/4f/b6/e06d39e1d8b3951ddaddab33e2670ae333d4ceb138124590443e89993f48/pedalboard-0.9.25-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:60666763e24055679d72cf8349ee4f442212c168a4e70442adbbc8dafcfa9e3d", size = 5942908, upload-time = "2026-09-09T21:07:15.84Z" },
+    { url = "https://files.pythonhosted.org/packages/8b/4c/05fda35c54f7ec42a8a87f93dc301a1ceb840e8971b142bdfc0f1c988ee6/pedalboard-0.9.25-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:5428030641ff87b0c20e24d217c4e1e020858e10c2f461a1f6ba2b1784fe86f1", size = 6131862, upload-time = "2026-09-09T21:07:17.123Z" },
+    { url = "https://files.pythonhosted.org/packages/af/5b/f3608b2b7f383038bf0cb2e241e2823bff65877a42172656b3bf5e9b9cfc/pedalboard-0.9.25-cp312-cp312-win_amd64.whl", hash = "sha256:51c9c87905cd221f334cf1d9e359a583f8cf40bb913c5c1fc494c44830898fa4", size = 3691258, upload-time = "2026-09-09T21:07:18.376Z" },
+    { url = "https://files.pythonhosted.org/packages/08/d5/2c4d26c1a1bd5c97c716b584ce33c0866bc9d176d0e47ec27cf7cb2b02bd/pedalboard-0.9.25-cp313-cp313-macosx_10_14_x86_64.whl", hash = "sha256:bb6cbbcc573aa9b77a83fe74e0d37dfd68495a49617ef468f23f01441ac0c3f5", size = 2669180, upload-time = "2026-09-09T21:07:19.819Z" },
+    { url = "https://files.pythonhosted.org/packages/ff/d2/f761a79a3a7b563e1001781d21bc0ea6798cc055dff276226f2ac4cacc09/pedalboard-0.9.25-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:56557e7ebaf6b34e84e60aedadb3ca04736c42c7c3c6cb947203c4063a7e5e6b", size = 2469488, upload-time = "2026-09-09T21:07:21.136Z" },
+    { url = "https://files.pythonhosted.org/packages/cc/d3/49fce1b50f9dbea2ad87b06ca5c1004b5a6621761ae53fb8df3963e1f66f/pedalboard-0.9.25-cp313-cp313-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:e3332e9470926d09b7dbaee09cfba3ba66fcf1278b5c298c389311f29c270bc5", size = 4908798, upload-time = "2026-09-09T21:07:22.44Z" },
+    { url = "https://files.pythonhosted.org/packages/3f/38/56d9d7efe5318428866c62ef830d0e0cb2132a5c5cda55dd9736d39f3952/pedalboard-0.9.25-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:c70437f85f64c29c897a48043d48868d4a1ebe7ff5136db198468693be27c0a6", size = 5117280, upload-time = "2026-09-09T21:07:23.879Z" },
+    { url = "https://files.pythonhosted.org/packages/6c/cc/19e1a2c986d7b2f81b0045e54144d624f076db6403302f4fe054d5717aaf/pedalboard-0.9.25-cp313-cp313-win_amd64.whl", hash = "sha256:1ff53f031efc33dd97b14119245b13050e0235bbb92226702baf22dea9e8a126", size = 3691475, upload-time = "2026-09-09T21:07:25.287Z" },
+    { url = "https://files.pythonhosted.org/packages/6e/ea/ae4c049c4569b1c8b3f3a155a4e1fca24d23fd5101692f6aa6b49c1270ea/pedalboard-0.9.25-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:9a83f822752604fc6e606241eb4c245b9db81866d5d6de07304efbe72b4c22ec", size = 2470536, upload-time = "2026-09-09T21:07:26.634Z" },
+    { url = "https://files.pythonhosted.org/packages/bc/66/8fc1d6bdbc61289a7e4f0cbf358a671c750e51ee4a89d64b6aac6a4eff29/pedalboard-0.9.25-cp314-cp314-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:acb53d652fb53d87951df8588586ec4c7f926e4ffc6a0c646f1749d1e1e6c081", size = 4910141, upload-time = "2026-09-09T21:07:28.562Z" },
+    { url = "https://files.pythonhosted.org/packages/1e/3c/8a962912cefa6d5e554900ed3439ecc911b244cf645f328d3f37ece064c6/pedalboard-0.9.25-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:6237d1ab1bdf710e7966265106311f1a587e503404493e33d5d44f128ab5ab93", size = 5126249, upload-time = "2026-09-09T21:07:30.43Z" },
+    { url = "https://files.pythonhosted.org/packages/23/19/0b44004def69ec8e0861b4aa3f2ffb804ed09aa1013b7b41f8e9edecc7b4/pedalboard-0.9.25-cp314-cp314-win_amd64.whl", hash = "sha256:c79238153f2c1206bef76c17b3702ba0f99d16bab5071c0bc0ca4d587e3840af", size = 3806526, upload-time = "2026-09-09T21:07:31.72Z" },
+    { url = "https://files.pythonhosted.org/packages/80/64/a84823fe1a43fbbcd3bcd30d449259eef4a30a396a2bff63d8ace098503a/pedalboard-0.9.25-cp314-cp314t-macosx_11_0_arm64.whl", hash = "sha256:3e50e4a68e2c82e43cf2b4c56ad0be3ad763d00d3ef364112fa93a41144d98f6", size = 2496835, upload-time = "2026-09-09T21:07:33.492Z" },
+    { url = "https://files.pythonhosted.org/packages/9b/01/c34cc1241e5c8e91e360c57cba7363a581f899c25d1a4622968e609b9857/pedalboard-0.9.25-cp314-cp314t-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:c730033543bd578d8a7249ad5046f6740d568f0f883acb19d682e5bcba20a156", size = 4910288, upload-time = "2026-09-09T21:07:35.002Z" },
+    { url = "https://files.pythonhosted.org/packages/53/60/eb5a3d7e749d77e7088a97f044b353fc476a81516c02a6e27520a3148e59/pedalboard-0.9.25-cp315-cp315-macosx_11_0_arm64.whl", hash = "sha256:5cb0671844b6a2eff305b1328c06755b7cc09dcd90b53fb64d4ae108a55e9a3d", size = 2470535, upload-time = "2026-09-09T21:07:36.336Z" },
+    { url = "https://files.pythonhosted.org/packages/88/f8/17432a811927bd3531bbd9e318d6955c6a6d293376b540b3bdee8228696a/pedalboard-0.9.25-cp315-cp315-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:1fe7d0f787628fb31ea049c82d6e3256bdcd53cfc5021e809bfbcf0a499b90d0", size = 4910140, upload-time = "2026-09-09T21:07:37.496Z" },
+    { url = "https://files.pythonhosted.org/packages/e5/f3/06783e410a5e2a81ba5424068c62b7b7c47b391e2dd80103fe421b4138df/pedalboard-0.9.25-cp315-cp315-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:29a7c29acfcea2d7c2f35511933f0377a1929f032b41fe87d0920084e2c71959", size = 5126249, upload-time = "2026-09-09T21:07:38.862Z" },
+    { url = "https://files.pythonhosted.org/packages/f6/84/62ea3ea40685222ba185bcc1f225a09a02d6f7dc1536ad4429be0fd6ef75/pedalboard-0.9.25-cp315-cp315-win_amd64.whl", hash = "sha256:ec0d9a769abb096cee9771947843269d305f3d81e6c9460d6d36863b2bca7985", size = 3806665, upload-time = "2026-09-09T21:07:40.269Z" },
+    { url = "https://files.pythonhosted.org/packages/c2/a1/d374c2c0260a2dea136894d75c91ba94b86dce17986b50b2c109354cfc3e/pedalboard-0.9.25-cp315-cp315t-macosx_11_0_arm64.whl", hash = "sha256:92fb563961dcb3a418926399c4be027cc6a8db9018ffd42e855c67534c87d31b", size = 2497194, upload-time = "2026-09-09T21:07:41.701Z" },
+    { url = "https://files.pythonhosted.org/packages/37/62/f073eb1bb0f3aeaa13de4487b0027712dad222f2e0d3bcb80e48e0e546d1/pedalboard-0.9.25-cp315-cp315t-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:159eabd1c05305dff62d1b390af6e2b7d1e6616383dc7d073723b067a6985a6d", size = 4910502, upload-time = "2026-09-09T21:07:43.043Z" },
+]
+
+[[package]]
 name = "phonemizer-fork"
 version = "3.3.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1592,6 +1627,38 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f9/e2/3e91f31a7d2b083fe6ef3fa267035b518369d9511ffab804f839851d2779/pluggy-1.6.0.tar.gz", hash = "sha256:7dcc130b76258d33b90f61b658791dede3486c3e6bfb003ee5c9bfb396dd22f3", size = 69412, upload-time = "2025-05-15T12:30:07.975Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/54/20/4d324d65cc6d9205fabedc306948156824eb9f0ee1633355a8f7ec5c66bf/pluggy-1.6.0-py3-none-any.whl", hash = "sha256:e920276dd6813095e9377c0bc5566d94c932c33b27a3e3945d8389c374dd4746", size = 20538, upload-time = "2025-05-15T12:30:06.134Z" },
+]
+
+[[package]]
+name = "praat-parselmouth"
+version = "0.4.7"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4f/28/2c1204fe3e7aeb6942051ff6776e31da52c7ab5b7df2ca438f371bd60d8a/praat_parselmouth-0.4.7.tar.gz", hash = "sha256:6dd81d246ce1eef5fd93d8cbdaf1bef61ca40ef1d2fc12aa23996a28071181e6", size = 22526491, upload-time = "2025-11-27T20:08:58.276Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/71/8b/e3ac60fd972d457ecf6b0b0bdd9b651f578c0f50ce31b4e176065ad1713d/praat_parselmouth-0.4.7-cp312-cp312-macosx_10_13_universal2.whl", hash = "sha256:fe123f5004e77a3a39150fc0b64b8960404c87ca8bb2a2e031c73ebd32d8e548", size = 17673383, upload-time = "2025-11-27T20:02:09.287Z" },
+    { url = "https://files.pythonhosted.org/packages/d5/e3/60f2caa3df1382bf24e171c6be2bf7c8fc0d5f9b443701a9b3397596c899/praat_parselmouth-0.4.7-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:5892deae3631d691c6339455f1bce065e095c77634299e57bb00df94041f7db3", size = 9051957, upload-time = "2025-11-27T20:02:13.435Z" },
+    { url = "https://files.pythonhosted.org/packages/75/ea/10e0f1bb64923c27dec9fcd3c28852751565df8ba3beb5ae1d8288fa65f8/praat_parselmouth-0.4.7-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:29e468febc3de2acad8f7718b10cc800610871e229afc549b6b51f009a87ede7", size = 8635367, upload-time = "2025-11-27T20:02:16.791Z" },
+    { url = "https://files.pythonhosted.org/packages/f9/a8/d410e7f10ca97293cf271f94c8ddff70deeac44d3b8a524aa44c796f52cc/praat_parselmouth-0.4.7-cp312-cp312-manylinux2014_i686.manylinux_2_17_i686.whl", hash = "sha256:e3fc0be825c5d1a4a05d2f85c5d8ff214d7178579cd2dd036cb902d9737a8d80", size = 10711677, upload-time = "2025-11-27T20:02:19.445Z" },
+    { url = "https://files.pythonhosted.org/packages/9f/5f/e4495c8ac6ed26a1f16a34269c12579532e747b4ac5db57123093904f2ec/praat_parselmouth-0.4.7-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:6b5fbfab5b3cd4f6146e6145559d5d7c231384d88f942e0c8c0e791058aa61a5", size = 10749363, upload-time = "2025-11-27T20:02:23.082Z" },
+    { url = "https://files.pythonhosted.org/packages/50/f3/6b7a92ab093e89b58c7abbda93ca9a7b1e72c1a5c020d49f42e8856c6740/praat_parselmouth-0.4.7-cp312-cp312-win32.whl", hash = "sha256:fb579964b92e7aa5774badfa760570a6645641592cb5eb9e50b5a2225875b210", size = 8125421, upload-time = "2025-11-27T20:02:26.073Z" },
+    { url = "https://files.pythonhosted.org/packages/6c/df/a358062226918326825b7af95850ce561a22c6dcdc2cac0665a8efc6a2d9/praat_parselmouth-0.4.7-cp312-cp312-win_amd64.whl", hash = "sha256:7cfd6941a4e8dd1d8398260f1269a831b84e9f230b03c569993e144a20704f99", size = 8958177, upload-time = "2025-11-27T20:02:29.308Z" },
+    { url = "https://files.pythonhosted.org/packages/be/1c/a772c9b064a935d40505699e69c6c7c513fbaa4725784bfef7fe36f47270/praat_parselmouth-0.4.7-cp313-cp313-macosx_10_13_universal2.whl", hash = "sha256:97a2f9225fe63b9d6ea4fd2787983faf4ad46b83b3d772abbc8b066e9ef8559f", size = 17673409, upload-time = "2025-11-27T20:02:33.031Z" },
+    { url = "https://files.pythonhosted.org/packages/c2/a9/5e38d5ce459795c73600dedca72912955a299eefc4cbd0759529d30fe488/praat_parselmouth-0.4.7-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:6ec2b7c3d59b41794923bf6ca7dd97f64bc295b1a4c7835e732add2cb0fabce9", size = 9051832, upload-time = "2025-11-27T20:02:35.545Z" },
+    { url = "https://files.pythonhosted.org/packages/53/16/ac1b44f6247d3abd86fc66634a32f56d43cc58f7314db81c40fd67fa2afd/praat_parselmouth-0.4.7-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:02b2b351e9dce18fb795ef91ce92107343183cff2cd8e56b40050016a45c7778", size = 8635340, upload-time = "2025-11-27T20:02:38.939Z" },
+    { url = "https://files.pythonhosted.org/packages/3e/e4/821007a09ca572ae4d4e0f431b925d47aa5ad41fea21de2f6283f7ef8e5c/praat_parselmouth-0.4.7-cp313-cp313-manylinux2014_i686.manylinux_2_17_i686.whl", hash = "sha256:b6430856750467b8dc84a7dec87ca52a43dc6e2c44a4f1864e8f01f32901ceeb", size = 10711649, upload-time = "2025-11-27T20:02:42.222Z" },
+    { url = "https://files.pythonhosted.org/packages/48/b8/4eb427cc8d03156990360cf21e2e3f9180a8c0a0a03698c9d2dd36c54e0c/praat_parselmouth-0.4.7-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:c22d9f80984e91162e3be13109637f5dfe10d2ca4d3b15edd7e782550ba627f1", size = 10749436, upload-time = "2025-11-27T20:02:45.746Z" },
+    { url = "https://files.pythonhosted.org/packages/8f/02/082031f1d6980aaeff05984225a6feadd948047ed6f4cbc0b00281a33950/praat_parselmouth-0.4.7-cp313-cp313-win32.whl", hash = "sha256:768b603cccd1b98db057aed3af52ba26c7a930ac4d48c2371bf6bb6702d7a068", size = 8125197, upload-time = "2025-11-27T20:02:49.291Z" },
+    { url = "https://files.pythonhosted.org/packages/83/35/089a5a8dd45800dcbaa23a414d6f4f5ec29a46fec04d654923efdb3a6746/praat_parselmouth-0.4.7-cp313-cp313-win_amd64.whl", hash = "sha256:e3bfe1fc8d0f0252766978affa2e7f9b68876540688dfb9c56535fcaa2f4776a", size = 8958175, upload-time = "2025-11-27T20:02:53.583Z" },
+    { url = "https://files.pythonhosted.org/packages/27/a6/50ab4dfee275a55cfe72383f861631f65753eac83b4dc6674ab173f04324/praat_parselmouth-0.4.7-cp314-cp314-macosx_10_15_universal2.whl", hash = "sha256:f022783e8c7fbc3985194d62db64a9ccde60a3ce744633dab8b55f594c12f625", size = 17668901, upload-time = "2025-11-27T20:03:01.486Z" },
+    { url = "https://files.pythonhosted.org/packages/94/87/03cef2fc1365000c0bd20f87bf282b3a913a39a2cd9edfc9fb3239c85f4c/praat_parselmouth-0.4.7-cp314-cp314-macosx_10_15_x86_64.whl", hash = "sha256:d656eb4a18edcf52735e95b0a68c32edf7202c591c35afae74cfc54bead88277", size = 9049021, upload-time = "2025-11-27T20:03:21.658Z" },
+    { url = "https://files.pythonhosted.org/packages/f5/8d/bb1121fd50ddcecd9e5d2d150c7a8656968c984e3562b623c64b02d90b10/praat_parselmouth-0.4.7-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:998138bf2acb15ae329caa217d523965b897417a1a2df130a2ecf41b664bfbf1", size = 8634455, upload-time = "2025-11-27T20:03:26.958Z" },
+    { url = "https://files.pythonhosted.org/packages/89/06/00003910356fb74284e9eb58c64bea0d0c85311061e7e39c080e370a86ef/praat_parselmouth-0.4.7-cp314-cp314-manylinux2014_i686.manylinux_2_17_i686.whl", hash = "sha256:313710a579d47effa50652d1cb3e335d926c1c0d1cea13e62dde8041676498f0", size = 10711434, upload-time = "2025-11-27T20:03:30.22Z" },
+    { url = "https://files.pythonhosted.org/packages/bf/fa/a9a2bb835c3c13e8212093f060831323c0cb1172223ba3af93f66212e4e0/praat_parselmouth-0.4.7-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:528cec1f4d2bbe02ed58fc6575071e9ccbf0d7ece815613c05d516e076b58a68", size = 10748994, upload-time = "2025-11-27T20:03:33.313Z" },
+    { url = "https://files.pythonhosted.org/packages/f7/ef/399a0f8b0c64d8910dc75826ba8c5fbb9490fa4b2e0777fbda7293db55d5/praat_parselmouth-0.4.7-cp314-cp314-win32.whl", hash = "sha256:71ff8990d454d0fa164aef269d1b2acccb6778d5c26a303d7e668b053a81af56", size = 8232788, upload-time = "2025-11-27T20:03:36.432Z" },
+    { url = "https://files.pythonhosted.org/packages/38/d4/bbc8153bde9812b33714c210b41ddb50d5af56a6d155f23ee44a01724146/praat_parselmouth-0.4.7-cp314-cp314-win_amd64.whl", hash = "sha256:aa467b5839fa9dd6e1aff146a80e80e157aedc93825772dfb4258f772c062ebb", size = 9110034, upload-time = "2025-11-27T20:03:38.516Z" },
 ]
 
 [[package]]
@@ -2810,6 +2877,8 @@ bakeoff = [
     { name = "f5-tts-mlx" },
     { name = "misaki", extra = ["en"] },
     { name = "mlx-audio", extra = ["tts"] },
+    { name = "pedalboard" },
+    { name = "praat-parselmouth" },
     { name = "soundfile" },
 ]
 dev = [
@@ -2830,6 +2899,8 @@ bakeoff = [
     { name = "f5-tts-mlx", specifier = ">=0.2.6" },
     { name = "misaki", extras = ["en"] },
     { name = "mlx-audio", extras = ["tts"], specifier = ">=0.5.6" },
+    { name = "pedalboard", specifier = ">=0.9" },
+    { name = "praat-parselmouth", specifier = ">=0.4" },
     { name = "soundfile" },
 ]
 dev = [{ name = "pytest", specifier = ">=8" }]
