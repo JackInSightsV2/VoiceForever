@@ -4,6 +4,7 @@ VoiceForever = VoiceForever or {}
 local VF = VoiceForever
 
 VF.quests = VF.quests or {} -- [questId][part][gender] = { file = path, hash = Drift hash }
+VF.gossip = VF.gossip or {} -- [npcId] = { { pattern = Lua pattern, file = path, gender = "m"|"f"|nil }, ... }
 VF.packs = VF.packs or {}
 
 local PARTS = { QUEST_DETAIL = "detail", QUEST_PROGRESS = "progress", QUEST_COMPLETE = "complete" }
@@ -30,12 +31,61 @@ function VF.RegisterPack(name, index)
       end
     end
   end
+  for npcId, entries in pairs(index.gossip or {}) do
+    local list = VF.gossip[npcId] or {}
+    VF.gossip[npcId] = list
+    for _, entry in ipairs(entries) do
+      entry.literal = VF.PatternLiteral(entry.pattern)
+      entry.order = #list + 1
+      list[#list + 1] = entry
+    end
+    -- Most specific first, so the first match wins; ties keep registration order.
+    table.sort(list, function(a, b)
+      if a.literal ~= b.literal then return a.literal > b.literal end
+      return a.order < b.order
+    end)
+    for i, entry in ipairs(list) do entry.order = i end
+  end
+end
+
+-- Literal characters in an anchored Gossip pattern "^...$" (".-" wildcards don't count; "%x" is one).
+function VF.PatternLiteral(pattern)
+  local n, i, last = 0, 2, #pattern - 1
+  while i <= last do
+    local c = pattern:sub(i, i)
+    if c == "%" then
+      n, i = n + 1, i + 2
+    elseif c == "." and pattern:sub(i + 1, i + 1) == "-" then
+      i = i + 2
+    else
+      n, i = n + 1, i + 1
+    end
+  end
+  return n
 end
 
 function VF.Lookup(questId, part, gender)
   local quest = VF.quests[questId]
   local byGender = quest and quest[part]
   return byGender and byGender[gender]
+end
+
+-- Gossip template match: the NPC's first pattern (most specific) matching the normalised displayed text.
+function VF.MatchGossip(npcId, text, gender)
+  local entries = npcId and VF.gossip[npcId]
+  if not entries then return nil end
+  text = VF.Normalise(text)
+  for _, entry in ipairs(entries) do
+    if (not entry.gender or entry.gender == gender) and text:find(entry.pattern) then
+      return entry
+    end
+  end
+end
+
+-- Gossip is voiced on English clients only; other locales skip it (Quest Text still plays, by quest ID).
+local function gossipLocale()
+  local locale = GetLocale()
+  return locale == "enUS" or locale == "enGB"
 end
 
 local handle
@@ -62,13 +112,21 @@ local function debug(...)
   end
 end
 
--- Look up and play; a miss or Drift is recorded through Capture. Gossip has no lookup yet, so it is always a miss.
+-- Look up and play; a miss or Drift is recorded through Capture.
+-- Quest Text is looked up by quest ID, Gossip (gossip window, quest greeting) by NPC ID and template match.
 local function onInteraction(event)
   local part = PARTS[event]
+  if not part and not gossipLocale() then return end
   local questId = part and GetQuestID() or nil
   local text = TEXT[event]() or ""
   local hash = VF.PlayerDriftHash(text)
-  local entry = part and VF.Lookup(questId, part, GENDERS[UnitSex("player")])
+  local gender = GENDERS[UnitSex("player")]
+  local entry
+  if part then
+    entry = VF.Lookup(questId, part, gender)
+  else
+    entry = VF.MatchGossip(VF.Capture.ParseGUID(UnitGUID("npc")), text, gender)
+  end
   if not entry then
     VF.Capture.Record("miss", event, questId, text, hash)
     debug(event, questId, "no audio")
@@ -82,14 +140,14 @@ local function onInteraction(event)
 end
 
 local frame = CreateFrame("Frame")
-for _, event in ipairs({ "ADDON_LOADED", "QUEST_FINISHED", "QUEST_DETAIL", "QUEST_PROGRESS", "QUEST_COMPLETE",
-  "QUEST_GREETING", "GOSSIP_SHOW" }) do
+for _, event in ipairs({ "ADDON_LOADED", "QUEST_FINISHED", "GOSSIP_CLOSED", "QUEST_DETAIL", "QUEST_PROGRESS",
+  "QUEST_COMPLETE", "QUEST_GREETING", "GOSSIP_SHOW" }) do
   frame:RegisterEvent(event)
 end
 frame:SetScript("OnEvent", function(_, event, arg1)
   if event == "ADDON_LOADED" then
     if arg1 == "VoiceForever" then VF.Capture.Load() end
-  elseif event == "QUEST_FINISHED" then
+  elseif event == "QUEST_FINISHED" or event == "GOSSIP_CLOSED" then
     VF.Stop()
   else
     onInteraction(event)
