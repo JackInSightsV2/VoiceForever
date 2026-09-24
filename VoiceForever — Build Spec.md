@@ -114,14 +114,14 @@ All Source Data is public. The work is joining it, not collecting it.
 
 | Need | Source |
 | --- | --- |
-| Gossip text | Blizzard `BroadcastText` (wago.tools DB2 export). Use Classic Era 1.15.9 until Forever's build is published, then switch |
-| Gossip menus per NPC | VMaNGOS `gossip_menu` → `npc_text`, mapped to `BroadcastText` IDs |
+| Gossip text | VMaNGOS `broadcast_text` (male_text / female_text). Blizzard's client `BroadcastText` DB2 is server-side only and not usable |
+| Gossip menus per NPC | VMaNGOS `gossip_menu` → `npc_text` → `broadcast_text` |
 | Quest text | VMaNGOS `quest_template` (Details, Objectives, RequestItemsText, OfferRewardText) |
 | Quest greeting (multi-quest NPCs) | VMaNGOS `quest_greeting` |
 | NPCs: name, subname, faction, flags, display IDs | VMaNGOS `creature_template`; CMaNGOS classic-db as a cross-check |
 | Spawn positions | VMaNGOS `creature` table (map, x, y, z) |
-| Zone IDs, quest start and end NPCs and objects | Questie npcData / questData / objectData Lua tables |
-| Race and gender | `CreatureDisplayInfo` → `CreatureDisplayInfoExtra`, plus `CreatureModelData` model paths (wago.tools DB2 exports) |
+| Zone IDs, quest start and end NPCs and objects | QuestieDB `data/Forever` npc/quest/object Lua tables (Forever zone maps) |
+| Race and gender | Forever build `CreatureDisplayInfo` → `CreatureDisplayInfoExtra`, plus `CreatureModelData` file IDs mapped to paths via the community listfile (wago.tools DB2 CSV exports) |
 | Forever Content, Drift | Capture records from the Core Addon's SavedVariables |
 
 **Race and gender resolution**
@@ -129,7 +129,7 @@ All Source Data is public. The work is joining it, not collecting it.
 1. For humanoid NPCs with a character model, `CreatureDisplayInfoExtra` gives race and sex directly.
 2. For creature models, parse the `CreatureModelData` path (e.g. `Creature\Ogre\Ogre.mdx`) for race. Gender defaults to the model's; if ambiguous, flag it for review.
 3. For NPCs with several display IDs, voice the most common model. Flag any whose display IDs mix races or genders.
-4. For Capture-only NPCs, resolve through the Forever build's `Creature` DB2 once it is published; until then use the captured `UnitSex` and creature type, and flag them.
+4. For Capture-only NPCs, use the captured `UnitSex` and creature type, and flag them. (The client's `Creature` DB2 is server-side and incomplete.)
 5. A `manual_overrides` table wins over everything else, covering disguised NPCs, speaking beasts and story characters.
 
 **SQLite schema (core)**
@@ -313,7 +313,6 @@ The first playable slice is one starting zone end to end. It proves the whole pi
 - [ ] **Voice-design model:** which model turns text prompts into reference clips reliably for fantasy races (ogre, troll, tauren)? Needs a spike before milestone 4.
 - [ ] **Separation threshold:** what embedding distance actually sounds different to a player? Calibrate once on \~20 pairs on the Approval page, then fix it for all runs.
 - [ ] **Neighbour radius:** start at \~150 yd and tune against a real 30-minute play route.
-- [ ] **Forever build on wago.tools:** not yet listed. Switch `BroadcastText` and `Creature` sources when it appears.
 - [ ] **Capture upload trust:** how uploaded Capture is validated before it becomes audio. Deferred until Forever Content collection starts.
 
 **Risks**
