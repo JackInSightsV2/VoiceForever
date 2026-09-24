@@ -28,8 +28,9 @@ DEFAULT_WER = 0.2
 NTFY_ENV = "VO_NTFY"
 
 
-def tts_hash(text: str) -> str:
-    return hashlib.sha256(text.encode()).hexdigest()[:16]
+def tts_hash(text: str, line_type: str | None = None) -> str:
+    """What a job was queued for: its text and its type's Delivery, so a change to either requeues it."""
+    return hashlib.sha256(f"{text}\0{tts.delivery(line_type).key()}".encode()).hexdigest()[:16]
 
 
 def _now() -> str:
@@ -45,6 +46,7 @@ class Job:
     out: str
     wer_threshold: float = DEFAULT_WER
     asr_model: str = asr.DEFAULT_MODEL
+    line_type: str | None = None  # picks the per-type Delivery (tts.DELIVERY)
 
 
 @dataclass(frozen=True)
@@ -58,12 +60,15 @@ class Result:
 
 # --- queue -----------------------------------------------------------------------------------------------------------
 
-def sync_jobs(conn: sqlite3.Connection, default_voice_id: str) -> int:
-    """Queue every line for its voice (the NPC's, else the default). A changed tts_text requeues the job and marks
-    its old audio stale; jobs for deleted lines or a replaced voice are dropped. Returns how many were (re)queued."""
-    wanted = {(r[0], r[1]): tts_hash(r[2]) for r in conn.execute(
-        "SELECT l.id, COALESCE(v.voice_id, ?), l.tts_text FROM lines l LEFT JOIN voices v ON v.npc_id = l.npc_id"
-        " WHERE COALESCE(l.tts_text, '') != ''", (default_voice_id,))}
+def sync_jobs(conn: sqlite3.Connection, default_voice_id: str,
+              narrator_voice_id: str = tts.NARRATOR_VOICE_ID) -> int:
+    """Queue every line for its voice: the NPC's, else the default; lines with no NPC get the Narrator. A changed
+    tts_text or Delivery requeues the job and marks its old audio stale; jobs for deleted lines or a replaced voice are
+    dropped. Returns how many were (re)queued."""
+    wanted = {(r[0], r[1]): tts_hash(r[2], r[3]) for r in conn.execute(
+        "SELECT l.id, CASE WHEN l.npc_id IS NULL THEN ? ELSE COALESCE(v.voice_id, ?) END, l.tts_text, l.type"
+        " FROM lines l LEFT JOIN voices v ON v.npc_id = l.npc_id"
+        " WHERE COALESCE(l.tts_text, '') != ''", (narrator_voice_id, default_voice_id))}
     have = {(r[0], r[1]): r[2] for r in conn.execute("SELECT line_id, voice_id, tts_hash FROM jobs")}
     new = [(*k, h) for k, h in wanted.items() if k not in have]
     changed = [(h, _now(), *k) for k, h in wanted.items() if k in have and have[k] != h]
@@ -127,7 +132,7 @@ def consume_actions(conn: sqlite3.Connection, log: Callable[[str], None] = print
 def claim(conn: sqlite3.Connection, audio_dir: Path, **job_opts) -> Job | None:
     """Mark the next pending job running and return it; each take gets a new seed (its lifetime try number)."""
     row = conn.execute(
-        "SELECT j.line_id, j.voice_id, j.tries, l.npc_id, l.tts_text FROM jobs j JOIN lines l ON l.id = j.line_id"
+        "SELECT j.line_id, j.voice_id, j.tries, l.npc_id, l.type, l.tts_text FROM jobs j JOIN lines l ON l.id = j.line_id"
         " WHERE j.status = 'pending' ORDER BY j.attempts, j.line_id LIMIT 1").fetchone()
     if row is None:
         return None
@@ -135,7 +140,8 @@ def claim(conn: sqlite3.Connection, audio_dir: Path, **job_opts) -> Job | None:
         conn.execute("UPDATE jobs SET status = 'running', tries = tries + 1, updated_at = ?"
                      " WHERE line_id = ? AND voice_id = ?", (_now(), row["line_id"], row["voice_id"]))
     out = audio_dir / str(row["npc_id"] or "narrator") / f"{row['line_id']}.ogg"
-    return Job(row["line_id"], row["voice_id"], row["tts_text"], row["tries"], str(out.resolve()), **job_opts)
+    return Job(row["line_id"], row["voice_id"], row["tts_text"], row["tries"], str(out.resolve()),
+               line_type=row["type"], **job_opts)
 
 
 def record(conn: sqlite3.Connection, job: Job, result: Result, max_attempts: int = MAX_ATTEMPTS) -> str:
@@ -166,7 +172,8 @@ def process_job(job: Job, tts_backend: tts.TTSBackend | None = None, asr_backend
     """Render, post-process, ASR-check and encode one line. Runs in a worker; never touches SQLite; never raises."""
     try:
         name, voice = tts.split_voice_id(job.voice_id)
-        samples, rate = (tts_backend or tts.backend(name)).render(job.text, voice, job.seed)
+        samples, rate = (tts_backend or tts.backend(name)).render(
+            job.text, voice, job.seed, tts.delivery(job.line_type))
         with tempfile.TemporaryDirectory() as tmp:
             wav = Path(tmp) / "line.wav"
             duration = audio.postprocess(samples, rate, wav)
@@ -214,6 +221,7 @@ def parse_until(hhmm: str, now: datetime) -> datetime:
 
 
 def run(conn: sqlite3.Connection, audio_dir: Path, *, voice_id: str = tts.DEFAULT_VOICE_ID,
+        narrator_voice_id: str = tts.NARRATOR_VOICE_ID,
         workers: int = DEFAULT_WORKERS, until: datetime | None = None, wer_threshold: float = DEFAULT_WER,
         asr_model: str = asr.DEFAULT_MODEL, max_attempts: int = MAX_ATTEMPTS, retry_quarantined: bool = True,
         processor: Callable[[Job], Result] = process_job, clock: Callable[[], datetime] = datetime.now,
@@ -221,7 +229,7 @@ def run(conn: sqlite3.Connection, audio_dir: Path, *, voice_id: str = tts.DEFAUL
     """Work the queue until it is empty or `until` passes; returns a summary. Safe to kill and rerun at any point."""
     with conn:  # a killed run leaves jobs 'running'
         conn.execute("UPDATE jobs SET status = 'pending' WHERE status = 'running'")
-    queued = sync_jobs(conn, voice_id)
+    queued = sync_jobs(conn, voice_id, narrator_voice_id)
     if retry_quarantined:
         with conn:
             conn.execute("UPDATE jobs SET status = 'pending', attempts = 0 WHERE status = 'quarantined'")

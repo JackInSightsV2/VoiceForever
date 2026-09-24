@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from vo import audio, db, run
+from vo import audio, db, run, tts
 
 VOICE = "kokoro:am_michael"
 
@@ -183,7 +183,11 @@ def _pool_processor(job):  # module level so spawn workers can import it
 # --- process_job with fake TTS and ASR, real post-processing ---------------------------------------------------------
 
 class ToneTTS:
-    def render(self, text, voice, seed):
+    def __init__(self):
+        self.deliveries = []
+
+    def render(self, text, voice, seed, delivery=tts.DEFAULT_DELIVERY):
+        self.deliveries.append(delivery)
         rate = 24000
         t = np.arange(rate) / rate
         tone = 0.2 * np.sin(2 * np.pi * 220 * t)
@@ -214,6 +218,78 @@ def test_process_job_rejects_high_wer_without_writing(tmp_path):
     out = tmp_path / "1.ogg"
     result = run.process_job(run.Job(1, VOICE, "kill ten wolves", 0, str(out)), ToneTTS(), EchoASR("kill wolves now"))
     assert not result.ok and result.wer == pytest.approx(2 / 3) and not out.exists()
+
+
+
+# --- Narrator and per-type delivery ----------------------------------------------------------------------------------
+
+def test_lines_without_an_npc_get_the_narrator_voice(conn, tmp_path):
+    conn.execute("INSERT INTO lines (id, npc_id, type, quest_id, raw_text, tts_text) VALUES (6, NULL, 'quest_detail',"
+                 " 6, 'Wanted: Hogger.', 'Wanted: Hogger.')")
+    conn.commit()
+    go(conn, tmp_path, Fake())
+    voices = dict(conn.execute("SELECT line_id, voice_id FROM audio").fetchall())
+    assert voices[6] == tts.NARRATOR_VOICE_ID != VOICE
+    assert voices[1] == VOICE
+    path = conn.execute("SELECT path FROM audio WHERE line_id = 6").fetchone()[0]
+    assert path == str((tmp_path / "audio" / "narrator" / "6.ogg").resolve())
+
+
+def test_narrator_voice_is_configurable_and_never_an_npc_voice(conn, tmp_path):
+    conn.execute("INSERT INTO lines (id, npc_id, type, quest_id, raw_text, tts_text) VALUES (6, NULL, 'quest_complete',"
+                 " 6, 'x', 'x')")
+    conn.execute("INSERT INTO voices (npc_id, voice_id) VALUES (823, 'kokoro:af_heart')")
+    conn.commit()
+    go(conn, tmp_path, Fake(), narrator_voice_id="kokoro:bf_emma")
+    assert dict(conn.execute("SELECT line_id, voice_id FROM jobs").fetchall()) == {
+        1: "kokoro:af_heart", 2: "kokoro:af_heart", 3: "kokoro:af_heart", 4: "kokoro:af_heart", 5: "kokoro:af_heart",
+        6: "kokoro:bf_emma"}
+
+
+def test_delivery_per_type():
+    assert tts.delivery("quest_complete").speed > tts.delivery("quest_detail").speed == 1.0
+    assert tts.delivery("quest_complete").exaggeration > tts.delivery("quest_progress").exaggeration
+    assert tts.delivery("quest_progress").speed == 1.0
+    assert tts.delivery(None) == tts.delivery("gossip") == tts.DEFAULT_DELIVERY
+
+
+def test_claimed_job_carries_line_type_and_backend_gets_its_delivery(conn, tmp_path):
+    conn.execute("UPDATE lines SET type = 'quest_complete' WHERE id = 1")
+    conn.commit()
+    run.sync_jobs(conn, VOICE)
+    job = run.claim(conn, tmp_path)
+    assert (job.line_id, job.line_type) == (1, "quest_complete")
+    backend = ToneTTS()
+    run.process_job(job, backend, EchoASR(job.text))
+    assert backend.deliveries == [tts.delivery("quest_complete")]
+
+
+def test_delivery_change_requeues_only_that_type(conn, tmp_path, monkeypatch):
+    conn.execute("UPDATE lines SET type = 'quest_complete' WHERE id = 3")
+    conn.commit()
+    go(conn, tmp_path, Fake())
+    monkeypatch.setitem(tts.DELIVERY, "quest_complete", tts.Delivery(speed=1.2))
+    fake = Fake()
+    go(conn, tmp_path, fake)
+    assert fake.calls == [(3, 1)]
+
+
+def test_kokoro_applies_speed_and_accent(monkeypatch):
+    calls = []
+
+    class Model:
+        sample_rate = 24000
+
+        def generate(self, text, **kw):
+            calls.append(kw)
+            yield type("R", (), {"audio": np.zeros(10, dtype=np.float32)})()
+
+    k = tts.Kokoro()
+    monkeypatch.setattr(tts.Kokoro, "_model", lambda self: Model())
+    k.render("hi", "am_michael", 0, tts.delivery("quest_complete"))
+    k.render("hi", "bm_george", 0)
+    assert calls == [{"voice": "am_michael", "speed": tts.delivery("quest_complete").speed, "lang_code": "a"},
+                     {"voice": "bm_george", "speed": 1.0, "lang_code": "b"}]
 
 
 # --- ntfy ------------------------------------------------------------------------------------------------------------

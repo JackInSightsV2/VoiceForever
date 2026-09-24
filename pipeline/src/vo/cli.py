@@ -32,6 +32,9 @@ def main(argv: list[str] | None = None) -> None:
     p = sub.add_parser("run", aliases=["generate"], help="work the generation queue unattended (resumable)")
     p.add_argument("--voice", default=None,
                    help="default voice for NPCs without one: Kokoro voice or <backend>:<voice> (default am_michael)")
+    p.add_argument("--narrator-voice", default=None,
+                   help="voice for lines with no NPC (object and item quests): Kokoro voice or <backend>:<voice>"
+                        " (default bm_george, until the Approval Gate sets one)")
     p.add_argument("--workers", type=int, default=3, help="parallel render workers (default 3)")
     p.add_argument("--until", metavar="HH:MM", help="stop taking new lines at this local time; rerun to resume")
     p.add_argument("--wer-threshold", type=float, default=0.2, help="max ASR word error rate before a retake")
@@ -71,9 +74,10 @@ def main(argv: list[str] | None = None) -> None:
         print(f"tts_text updated for {prep.prepare_lines(db.connect(args.db))} lines")
     elif args.command in ("run", "generate"):
         from vo import asr, run, tts
-        voice = args.voice or tts.DEFAULT_VOICE
+        voice, narrator = args.voice or tts.DEFAULT_VOICE, args.narrator_voice or tts.NARRATOR_VOICE_ID
         opts = dict(
-            voice_id=voice if ":" in voice else f"kokoro:{voice}", workers=args.workers,
+            voice_id=voice if ":" in voice else f"kokoro:{voice}",
+            narrator_voice_id=narrator if ":" in narrator else f"kokoro:{narrator}", workers=args.workers,
             until=run.parse_until(args.until, datetime.now()) if args.until else None,
             wer_threshold=args.wer_threshold, asr_model=args.asr_model or asr.DEFAULT_MODEL,
             retry_quarantined=not args.no_retry_quarantined)
