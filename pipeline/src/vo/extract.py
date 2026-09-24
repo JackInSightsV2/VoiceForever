@@ -407,11 +407,12 @@ def _write(conn, npcs, spawns, wanted, zones: Zones):
     core = [r[0] for r in conn.execute("SELECT id FROM npcs WHERE source = 'core'")]
     conn.executemany("DELETE FROM spawns WHERE npc_id = ?", [(i,) for i in core])
     conn.execute("DELETE FROM npcs WHERE source = 'core'")
-    conn.execute("DELETE FROM npc_issues")
 
     cols = ("id", "name", "subname", "race", "gender", "model", "faction", "role", "level_min", "level_max", "is_named")
     conn.executemany(f"INSERT OR REPLACE INTO npcs ({', '.join(cols)}, source) VALUES ({', '.join('?' * len(cols))}, 'core')",
                      [tuple(n[c] for c in cols) for n in npcs.values()])
+    # Capture-only NPCs (vo ingest) keep their flags; a Capture NPC the Source Data now has is re-flagged as core.
+    conn.execute("DELETE FROM npc_issues WHERE npc_id NOT IN (SELECT id FROM npcs WHERE source = 'capture')")
     rows, issues = [], []
     for e, n in npcs.items():
         issues += [(e, i, d) for i, d in n["issues"]]

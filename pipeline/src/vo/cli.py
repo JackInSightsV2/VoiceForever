@@ -40,6 +40,8 @@ def main(argv: list[str] | None = None) -> None:
                    help="ntfy topic URL to notify on finish or fatal error (default $VO_NTFY)")
     p.add_argument("--no-caffeinate", action="store_true", help="don't hold caffeinate -dis")
     p.add_argument("--no-retry-quarantined", action="store_true", help="leave quarantined lines alone this run")
+    p = sub.add_parser("ingest", help="import Capture records from Core Addon SavedVariables files")
+    p.add_argument("files", type=Path, nargs="+", metavar="SAVEDVARIABLES")
     p = sub.add_parser("package", help="build a Voice Pack into build/packs")
     p.add_argument("--pack", default=None)
     p = sub.add_parser("install", help="symlink the Core Addon and built packs into an AddOns dir")
@@ -81,6 +83,19 @@ def main(argv: list[str] | None = None) -> None:
         with run.caffeinate(not args.no_caffeinate):
             summary = run.run_notified(args.ntfy, lambda: run.run(db.connect(args.db), BUILD / "audio", **opts))
         print(run.summary_text(summary))
+    elif args.command == "ingest":
+        from vo import ingest, savedvars
+        conn, rejected = db.connect(args.db), 0
+        for path in args.files:
+            try:
+                upload_id, counts = ingest.ingest_file(conn, path)
+            except (OSError, savedvars.Malformed) as e:
+                print(f"{path}: rejected: {e}", file=sys.stderr)
+                rejected += 1
+                continue
+            print(ingest.summary_text(path, upload_id, counts))
+        if rejected:
+            sys.exit(1)
     elif args.command == "package":
         from vo import package
         print(package.package(db.connect(args.db), BUILD / "packs", args.pack or package.DEFAULT_PACK))
