@@ -34,6 +34,8 @@ CREATE TABLE IF NOT EXISTS capture (
   zone INTEGER, x REAL, y REAL, event TEXT, quest_id INTEGER, text TEXT, text_hash TEXT, locale TEXT, seen_at TEXT
 );
 CREATE TABLE IF NOT EXISTS manual_overrides (npc_id INTEGER, field TEXT, value TEXT);
+-- Resolution flags for review: unresolved race/gender, mixed displays, defaulted gender, missing spawn/zone.
+CREATE TABLE IF NOT EXISTS npc_issues (npc_id INTEGER, issue TEXT, detail TEXT);
 """
 
 

@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "VoiceForever offline voice pipeline"
 requires-python = ">=3.12"
 dependencies = [
+    "lupa>=2.8",
     "misaki[en]>=0.9.4",
     "mlx-audio>=0.5.6",
 ]
