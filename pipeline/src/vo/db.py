@@ -74,7 +74,18 @@ MIGRATIONS = [
     ("capture", "expected_hash", "TEXT"),   # Drift: the pack's hash the displayed text didn't match
     ("capture", "guid_type", "TEXT"),       # Creature, Vehicle, GameObject, ...
     ("capture", "record_key", "TEXT"),      # de-duplication key across uploads
+    # A core line's identity: the Source Data wording it was extracted from. raw_text differs from it once Capture
+    # recorded Drift (the line is then drifted); NULL for Capture lines.
+    ("lines", "source_text", "TEXT"),
 ]
+
+# Fills source_text on core lines: the text before their first Drift update, else their current text.
+BACKFILL_SOURCE_TEXT = """
+UPDATE lines SET source_text = COALESCE(
+  (SELECT h.raw_text FROM line_history h WHERE h.line_id = lines.id AND h.reason LIKE 'drift%' ORDER BY h.rowid LIMIT 1),
+  raw_text)
+WHERE source = 'core' AND source_text IS NULL
+"""
 
 
 def connect(path: Path) -> sqlite3.Connection:
@@ -87,5 +98,8 @@ def connect(path: Path) -> sqlite3.Connection:
     for table, column, kind in MIGRATIONS:
         if column not in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
+            if (table, column) == ("lines", "source_text"):
+                conn.execute(BACKFILL_SOURCE_TEXT)
+                conn.commit()
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS capture_record_key ON capture (record_key)")
     return conn

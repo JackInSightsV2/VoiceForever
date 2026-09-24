@@ -4,7 +4,8 @@ Each record lands once in `capture` (de-duplicated across uploads by its Capture
 
 - a miss whose text no line has becomes a `source='capture'` line (Quest Text by quest ID, Gossip by NPC);
 - a Drift record replaces the matching line's text with the captured wording (the old text goes to `line_history`),
-  so `vo run` requeues it;
+  so `vo run` requeues it. The line keeps its Source Data wording in `source_text`, so `vo extract` doesn't revert it;
+  a Drift record whose line doesn't exist yet is retried by each `vo extract --all` (`retry_drift`);
 - an NPC the pipeline doesn't know becomes a `source='capture'` NPC, gendered by UnitSex and flagged for review.
 
 The client shows text with the player's name, race and class filled in and `$G` resolved. The addon's hash masks
@@ -176,7 +177,8 @@ def _replace_text(conn: sqlite3.Connection, line: sqlite3.Row, r: dict, capture_
     conn.execute("INSERT INTO line_history (line_id, raw_text, tts_text, text_hash, reason, capture_id)"
                  " VALUES (?, ?, ?, ?, ?, ?)", (line["id"], line["raw_text"], line["tts_text"], line["text_hash"],
                                                 reason, capture_id))
-    conn.execute("UPDATE lines SET raw_text = ?, tts_text = ?, text_hash = ? WHERE id = ?",
+    conn.execute("UPDATE lines SET raw_text = ?, tts_text = ?, text_hash = ?,"
+                 " source_text = CASE WHEN source = 'core' THEN COALESCE(source_text, raw_text) END WHERE id = ?",
                  (raw, text.prepare(raw, line["player_gender"]), r["hash"], line["id"]))
     if not ok:
         conn.execute("INSERT INTO line_issues VALUES (?, 'untokenised', ?)", (line["id"], _UNTOKENISED))
@@ -196,6 +198,21 @@ def _drift(conn: sqlite3.Connection, r: dict, capture_id: int, counts: Counter) 
     for line in lines:
         _replace_text(conn, line, r, capture_id, "drift")
         counts["drift_updates"] += 1
+
+
+def retry_drift(conn: sqlite3.Connection) -> int:
+    """Apply the stored English Drift records that haven't updated a line yet (e.g. ingested before `vo extract`
+    created their core line). Returns how many lines they updated."""
+    counts = Counter()
+    rows = conn.execute(
+        f"SELECT * FROM capture c WHERE kind = 'drift' AND locale IN {tuple(sorted(ENGLISH))}"
+        " AND NOT EXISTS (SELECT 1 FROM line_history h WHERE h.capture_id = c.id) ORDER BY id").fetchall()
+    for c in rows:
+        if c["event"] in TYPES:
+            r = dict(type=TYPES[c["event"]], quest_id=c["quest_id"], expected=c["expected_hash"], hash=c["text_hash"],
+                     text=c["text"])
+            _drift(conn, r, c["id"], counts)
+    return counts["drift_updates"]
 
 
 def _miss(conn: sqlite3.Connection, r: dict, capture_id: int, counts: Counter) -> None:

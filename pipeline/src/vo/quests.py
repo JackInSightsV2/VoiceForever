@@ -24,13 +24,13 @@ def extract_detail(conn: sqlite3.Connection, world: sqlite3.Connection, quest_id
         # UNIQUE doesn't dedupe NULL npc_id/player_gender in SQLite, so match with IS.
         row = conn.execute(
             "SELECT id FROM lines WHERE type = 'quest_detail' AND quest_id = ?"
-            " AND npc_id IS ? AND player_gender IS ? AND raw_text = ?",
+            " AND npc_id IS ? AND player_gender IS ? AND COALESCE(source_text, raw_text) = ?",
             (quest_id, npc_id, gender, raw)).fetchone()
         if row is None:
             row = conn.execute(
-                "INSERT INTO lines (npc_id, type, quest_id, player_gender, raw_text, tts_text, text_hash)"
-                " VALUES (?, 'quest_detail', ?, ?, ?, ?, ?) RETURNING id",
-                (npc_id, quest_id, gender, raw, text.prepare(raw, gender), drift.text_hash(raw, gender))).fetchone()
+                "INSERT INTO lines (npc_id, type, quest_id, player_gender, raw_text, tts_text, text_hash, source_text)"
+                " VALUES (?, 'quest_detail', ?, ?, ?, ?, ?, ?) RETURNING id",
+                (npc_id, quest_id, gender, raw, text.prepare(raw, gender), drift.text_hash(raw, gender), raw)).fetchone()
         ids.append(row[0])
     conn.commit()
     return ids
