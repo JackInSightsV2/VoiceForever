@@ -19,3 +19,12 @@ def test_prepare_lines_applies_lexicon(tmp_path):
     conn.execute("INSERT INTO lines (type, raw_text) VALUES ('quest_detail', 'Thrall awaits.')")
     prep.prepare_lines(conn, lexicon=lambda s: s.replace("Thrall", "Thrawl"))
     assert conn.execute("SELECT tts_text FROM lines").fetchone()[0] == "Thrawl awaits."
+
+
+def test_prepare_lines_keeps_hand_edited_tts_text(tmp_path):
+    conn = db.connect(tmp_path / "vo.sqlite")
+    conn.execute("INSERT INTO lines (id, type, raw_text, tts_text) VALUES (7, 'quest_detail', 'Hi $n.', 'Hi there.')")
+    conn.execute("INSERT INTO review_actions (action, target, payload, consumed_at) VALUES"
+                 " ('edit-tts-text', '7', '{\"tts_text\": \"Hi there.\"}', '2026-09-24T07:00:00')")
+    assert prep.prepare_lines(conn) == 0
+    assert conn.execute("SELECT tts_text FROM lines").fetchone()[0] == "Hi there."

@@ -14,6 +14,7 @@ DEFAULT_DB = BUILD / "vo.sqlite"
 DATA = REPO / "data"
 DEFAULT_WORLD = DATA / "vmangos" / "sqlite-dump" / "mangos.sqlite"
 CORE_ADDON = REPO / "addon" / "VoiceForever"
+DASHBOARD = REPO / "dashboard"
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -47,6 +48,10 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--pack", default=None)
     p = sub.add_parser("install", help="symlink the Core Addon and built packs into an AddOns dir")
     p.add_argument("addons_dir", type=Path)
+    p = sub.add_parser("dashboard", help="serve the review dashboard (Bun) on localhost")
+    p.add_argument("--port", type=int, default=8787)
+    p.add_argument("--host", default="127.0.0.1", help="bind address (e.g. a Tailscale IP to check from a phone)")
+    p.add_argument("--audio", type=Path, default=BUILD / "audio", help="audio dir to serve for playback")
     args = parser.parse_args(argv)
 
     if args.command == "init":
@@ -92,6 +97,14 @@ def main(argv: list[str] | None = None) -> None:
         from vo import install
         for link in install.install(args.addons_dir, CORE_ADDON, BUILD / "packs"):
             print(f"{link} -> {link.resolve()}")
+    elif args.command == "dashboard":
+        import shutil
+        bun = shutil.which("bun")
+        if bun is None:
+            sys.exit("vo dashboard needs Bun: https://bun.sh")
+        db.connect(args.db).close()  # create it and its tables (WAL) so the dashboard can open it read-only
+        os.execv(bun, [bun, str(DASHBOARD / "server.ts"), "--db", str(args.db), "--audio", str(args.audio),
+                       "--port", str(args.port), "--host", args.host])
 
 
 if __name__ == "__main__":

@@ -52,6 +52,13 @@ CREATE TABLE IF NOT EXISTS review_actions (
 );
 -- Resolution flags for review: unresolved race/gender, mixed displays, defaulted gender, missing spawn/zone.
 CREATE TABLE IF NOT EXISTS npc_issues (npc_id INTEGER, issue TEXT, detail TEXT);
+-- One row per vo run: its history, and a heartbeat the dashboard uses to tell a live run from a dead one.
+-- status: running | paused | finished | until | killed | failed. Times are local ISO, like jobs.updated_at.
+CREATE TABLE IF NOT EXISTS runs (
+  id INTEGER PRIMARY KEY, pid INTEGER, workers INTEGER,
+  started_at TEXT, last_heartbeat TEXT, ended_at TEXT,
+  status TEXT NOT NULL DEFAULT 'running', until TEXT, summary TEXT, error TEXT
+);
 """
 
 

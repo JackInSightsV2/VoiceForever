@@ -10,6 +10,7 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
+import time as time_mod
 import urllib.request
 from collections import Counter
 from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, wait
@@ -25,6 +26,7 @@ from vo import asr, audio, tts
 MAX_ATTEMPTS = 3
 DEFAULT_WORKERS = 3
 DEFAULT_WER = 0.2
+POLL_S = 5.0  # how often a run heartbeats and checks review_actions, busy or paused
 NTFY_ENV = "VO_NTFY"
 
 
@@ -97,33 +99,93 @@ def _for_line(action: sqlite3.Row) -> tuple[str, list]:
 
 def _retry_line(conn: sqlite3.Connection, action: sqlite3.Row) -> None:
     where, params = _for_line(action)
-    conn.execute(f"UPDATE jobs SET status = 'pending', attempts = 0, reason = NULL, updated_at = ? WHERE {where}",
-                 [_now(), *params])
+    conn.execute(f"UPDATE jobs SET status = 'pending', attempts = 0, reason = NULL, updated_at = ?"
+                 f" WHERE {where} AND status != 'running'", [_now(), *params])
 
 
 def _skip_line(conn: sqlite3.Connection, action: sqlite3.Row) -> None:
     where, params = _for_line(action)
-    conn.execute(f"UPDATE jobs SET status = 'skipped', reason = ?, updated_at = ? WHERE {where}",
+    conn.execute(f"UPDATE jobs SET status = 'skipped', reason = ?, updated_at = ? WHERE {where} AND status != 'running'",
                  [_payload(action).get("reason", "skipped in review"), _now(), *params])
+
+
+def _edit_tts_text(conn: sqlite3.Connection, action: sqlite3.Row) -> None:
+    """Replace a line's spoken text and requeue its jobs (a job mid-render is requeued by the next run's sync)."""
+    text = str(_payload(action).get("tts_text") or "").strip()
+    if not text:
+        raise ValueError("empty tts_text")
+    line_id = int(action["target"])
+    conn.execute("UPDATE lines SET tts_text = ? WHERE id = ?", (text, line_id))
+    idle = "line_id = ? AND status != 'running'"
+    conn.execute(f"UPDATE audio SET status = 'stale' WHERE line_id = ? AND voice_id IN (SELECT voice_id FROM jobs"
+                 f" WHERE {idle})", (line_id, line_id))
+    conn.execute(f"UPDATE jobs SET tts_hash = ?, status = 'pending', attempts = 0, reason = NULL, wer = NULL,"
+                 f" transcript = NULL, updated_at = ? WHERE {idle}", (tts_hash(text), _now(), line_id))
 
 
 # Other dashboard actions (approve voice, fix lexicon, ...) land with their tickets; until then they stay unconsumed.
 ACTIONS: dict[str, Callable[[sqlite3.Connection, sqlite3.Row], None]] = {
     "retry-line": _retry_line,
     "skip-line": _skip_line,
+    "edit-tts-text": _edit_tts_text,
 }
 
 
-def consume_actions(conn: sqlite3.Connection, log: Callable[[str], None] = print) -> int:
-    """Apply unconsumed review_actions in order; returns how many were consumed."""
+@dataclass
+class Control:
+    """A live run's dashboard-controlled state. Run actions target "run:<id>"; ones for another run are dropped."""
+    run_id: int | None = None
+    until: datetime | None = None
+    paused: bool = False
+    clock: Callable[[], datetime] = datetime.now
+    until_changed: bool = False
+
+
+def _pause(control: Control, action: sqlite3.Row) -> str:
+    control.paused = True
+    return "paused: finishing in-flight lines, taking no new ones until resumed"
+
+
+def _resume(control: Control, action: sqlite3.Row) -> str:
+    control.paused = False
+    return "resumed"
+
+
+def _set_until(control: Control, action: sqlite3.Row) -> str:
+    hhmm = _payload(action).get("until")
+    control.until = parse_until(hhmm, control.clock()) if hhmm else None
+    control.until_changed = True
+    return f"until set to {control.until:%a %H:%M}" if control.until else "until cleared"
+
+
+RUN_ACTIONS: dict[str, Callable[[Control, sqlite3.Row], str]] = {
+    "pause-run": _pause,
+    "resume-run": _resume,
+    "set-until": _set_until,
+}
+
+
+def consume_actions(conn: sqlite3.Connection, log: Callable[[str], None] = print, control: Control | None = None) -> int:
+    """Apply unconsumed review_actions in order; returns how many were consumed. An invalid action is logged and
+    dropped. Run actions need a live run (`control`) and are dropped if they target another run."""
     n = 0
     for action in conn.execute("SELECT * FROM review_actions WHERE consumed_at IS NULL ORDER BY id").fetchall():
-        handler = ACTIONS.get(action["action"])
-        if handler is None:
-            log(f"review action {action['id']}: {action['action']!r} not supported yet, left queued")
+        name, tag = action["action"], f"review action {action['id']} ({action['action']} {action['target']})"
+        if name in RUN_ACTIONS and control is None:
+            continue
+        if name not in ACTIONS and name not in RUN_ACTIONS:
+            log(f"review action {action['id']}: {name!r} not supported yet, left queued")
             continue
         with conn:
-            handler(conn, action)
+            try:
+                if name in ACTIONS:
+                    ACTIONS[name](conn, action)
+                elif action["target"] == f"run:{control.run_id}":
+                    log(RUN_ACTIONS[name](control, action))
+                else:
+                    log(f"{tag}: dropped, that run is over")
+            except (ValueError, TypeError) as e:  # includes a bad JSON payload
+                log(f"{tag}: invalid, dropped: {e}")
             conn.execute("UPDATE review_actions SET consumed_at = ? WHERE id = ?", (_now(), action["id"]))
         n += 1
     return n
@@ -220,39 +282,76 @@ def parse_until(hhmm: str, now: datetime) -> datetime:
     return at if at > now else at + timedelta(days=1)
 
 
+def _start_run(conn: sqlite3.Connection, workers: int, until: datetime | None) -> int:
+    now = _now()
+    with conn:
+        return conn.execute("INSERT INTO runs (pid, workers, started_at, last_heartbeat, until) VALUES (?, ?, ?, ?, ?)",
+                            (os.getpid(), workers, now, now, until and until.isoformat(timespec="seconds"))).lastrowid
+
+
+def _heartbeat(conn: sqlite3.Connection, control: Control) -> None:
+    with conn:
+        conn.execute("UPDATE runs SET last_heartbeat = ?, status = ?, until = ? WHERE id = ?",
+                     (_now(), "paused" if control.paused else "running",
+                      control.until and control.until.isoformat(timespec="seconds"), control.run_id))
+
+
+def _end_run(conn: sqlite3.Connection, run_id: int, status: str, summary: dict | None, error: str | None) -> None:
+    now = _now()
+    with conn:
+        conn.execute("UPDATE runs SET status = ?, ended_at = ?, last_heartbeat = ?, summary = ?, error = ? WHERE id = ?",
+                     (status, now, now, summary and json.dumps(summary), error, run_id))
+
+
 def run(conn: sqlite3.Connection, audio_dir: Path, *, voice_id: str = tts.DEFAULT_VOICE_ID,
         narrator_voice_id: str = tts.NARRATOR_VOICE_ID,
         workers: int = DEFAULT_WORKERS, until: datetime | None = None, wer_threshold: float = DEFAULT_WER,
         asr_model: str = asr.DEFAULT_MODEL, max_attempts: int = MAX_ATTEMPTS, retry_quarantined: bool = True,
         processor: Callable[[Job], Result] = process_job, clock: Callable[[], datetime] = datetime.now,
-        log: Callable[[str], None] = print) -> dict:
-    """Work the queue until it is empty or `until` passes; returns a summary. Safe to kill and rerun at any point."""
+        log: Callable[[str], None] = print, poll_s: float = POLL_S,
+        sleep: Callable[[float], None] = time_mod.sleep) -> dict:
+    """Work the queue until it is empty or `until` passes; returns a summary. Safe to kill and rerun at any point.
+
+    Every loop (at least every `poll_s`) it heartbeats its `runs` row and consumes review_actions, so the dashboard
+    can pause, resume or move `until` mid-run. A paused run finishes in-flight lines, then idles until resumed."""
     with conn:  # a killed run leaves jobs 'running'
         conn.execute("UPDATE jobs SET status = 'pending' WHERE status = 'running'")
     queued = sync_jobs(conn, voice_id, narrator_voice_id)
     if retry_quarantined:
         with conn:
             conn.execute("UPDATE jobs SET status = 'pending', attempts = 0 WHERE status = 'quarantined'")
-    consume_actions(conn, log)
     audio_dir.mkdir(parents=True, exist_ok=True)
+    control = Control(_start_run(conn, workers, until), until, clock=clock)
     this_run: Counter = Counter()
-    paused = False
+    stopping = False  # until reached: finish in-flight lines, then exit
+    end_status, summary, error = "failed", None, None
     executor = _executor(workers)
     in_flight: dict[Future, Job] = {}
     try:
         while True:
-            while len(in_flight) < max(1, workers) and not paused:
-                if until is not None and clock() >= until:
-                    paused = True
-                    log(f"--until {until:%H:%M} reached: finishing in-flight lines, taking no new ones")
+            consume_actions(conn, log, control)
+            if control.until_changed:
+                stopping, control.until_changed = False, False
+            _heartbeat(conn, control)
+            while len(in_flight) < max(1, workers) and not control.paused and not stopping:
+                if control.until is not None and clock() >= control.until:
+                    stopping = True
+                    log(f"--until {control.until:%H:%M} reached: finishing in-flight lines, taking no new ones")
                     break
                 job = claim(conn, audio_dir, wer_threshold=wer_threshold, asr_model=asr_model)
                 if job is None:
                     break
                 in_flight[executor.submit(processor, job)] = job
             if not in_flight:
+                if control.paused and not stopping:
+                    if control.until is not None and clock() >= control.until:
+                        stopping = True
+                        log(f"--until {control.until:%H:%M} reached while paused")
+                        break
+                    sleep(poll_s)
+                    continue
                 break
-            done, _ = wait(in_flight, return_when=FIRST_COMPLETED)
+            done, _ = wait(in_flight, timeout=poll_s, return_when=FIRST_COMPLETED)
             broken = False
             for fut in done:
                 job = in_flight.pop(fut)
@@ -274,11 +373,20 @@ def run(conn: sqlite3.Connection, audio_dir: Path, *, voice_id: str = tts.DEFAUL
                 in_flight.clear()
                 executor.shutdown(wait=False, cancel_futures=True)
                 executor = _executor(workers)
+        summary = {"queued": queued, "this_run": dict(this_run), "paused": stopping, "jobs": counts(conn)}
+        end_status = "until" if stopping else "finished"
+        return summary
+    except Exception as e:
+        error = f"{type(e).__name__}: {e}"
+        raise
+    except BaseException:  # KeyboardInterrupt, SIGTERM's SystemExit
+        end_status = "killed"
+        raise
     finally:
         executor.shutdown(wait=False, cancel_futures=True)
         with conn:
             conn.execute("UPDATE jobs SET status = 'pending' WHERE status = 'running'")
-    return {"queued": queued, "this_run": dict(this_run), "paused": paused, "jobs": counts(conn)}
+        _end_run(conn, control.run_id, end_status, summary, error)
 
 
 def summary_text(summary: dict) -> str:

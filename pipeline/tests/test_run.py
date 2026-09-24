@@ -1,4 +1,5 @@
 import json
+import os
 import threading
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -167,6 +168,111 @@ def test_review_actions_are_consumed_first(conn, tmp_path):
     assert conn.execute("SELECT reason FROM jobs WHERE line_id = 4").fetchone()[0] == "bad source text"
     consumed = conn.execute("SELECT action, consumed_at IS NOT NULL FROM review_actions ORDER BY id").fetchall()
     assert [tuple(r) for r in consumed] == [("retry-line", 1), ("skip-line", 1), ("approve-voice", 0)]
+
+
+def act(conn, action, target, payload=None):
+    conn.execute("INSERT INTO review_actions (action, target, payload) VALUES (?, ?, ?)",
+                 (action, target, payload and json.dumps(payload)))
+    conn.commit()
+
+
+def live_run(conn):
+    return f"run:{conn.execute('SELECT MAX(id) FROM runs').fetchone()[0]}"
+
+
+def test_edit_tts_text_updates_the_line_and_requeues_it(conn, tmp_path):
+    go(conn, tmp_path, Fake(fail=lambda job: job.line_id == 2), retry_quarantined=False)
+    act(conn, "edit-tts-text", "2", {"tts_text": "  Kel Thoo zad awaits.  "})
+    fake = Fake()
+    go(conn, tmp_path, fake, retry_quarantined=False)
+    assert fake.calls == [(2, 3)]
+    assert conn.execute("SELECT tts_text FROM lines WHERE id = 2").fetchone()[0] == "Kel Thoo zad awaits."
+    assert statuses(conn)[2] == "done"
+    assert run.sync_jobs(conn, VOICE) == 0  # the job's hash already matches the new text
+
+
+def test_edit_tts_text_marks_done_audio_stale(conn, tmp_path):
+    go(conn, tmp_path, Fake())
+    act(conn, "edit-tts-text", "3", {"tts_text": "new words"})
+    run.consume_actions(conn, log=lambda _: None)
+    assert conn.execute("SELECT status FROM audio WHERE line_id = 3").fetchone()[0] == "stale"
+    assert statuses(conn)[3] == "pending"
+
+
+def test_invalid_action_is_dropped_not_fatal(conn, tmp_path):
+    act(conn, "edit-tts-text", "2", {"tts_text": "   "})
+    act(conn, "retry-line", "not-a-line")
+    logs = []
+    assert run.consume_actions(conn, log=logs.append) == 2
+    assert all("invalid, dropped" in l for l in logs)
+    assert conn.execute("SELECT tts_text FROM lines WHERE id = 2").fetchone()[0] == "line 2"
+
+
+def test_pause_stops_taking_lines_until_resumed(conn, tmp_path):
+    events = []
+
+    class Pausing(Fake):
+        def __call__(self, job):
+            if job.line_id == 2:
+                act(conn, "pause-run", live_run(conn))
+            events.append(("line", job.line_id))
+            return super().__call__(job)
+
+    def sleep(s):
+        events.append(("sleep", conn.execute("SELECT status FROM runs").fetchone()[0]))
+        act(conn, "resume-run", live_run(conn))
+
+    summary = go(conn, tmp_path, Pausing(), sleep=sleep)
+    assert events == [("line", 1), ("line", 2), ("sleep", "paused"), ("line", 3), ("line", 4), ("line", 5)]
+    assert summary["jobs"] == {"done": 5}
+
+
+def test_set_until_from_dashboard_stops_the_run(conn, tmp_path):
+    now = datetime(2026, 9, 24, 6, 58)
+
+    class Setting(Fake):
+        def __call__(self, job):
+            if job.line_id == 2:
+                act(conn, "set-until", live_run(conn), {"until": "06:30"})  # already past today: tomorrow 06:30
+                act(conn, "set-until", live_run(conn), {"until": "06:59"})
+            return super().__call__(job)
+
+    clock = iter([now, now, now + timedelta(minutes=1)])
+    summary = go(conn, tmp_path, Setting(), clock=lambda: next(clock))
+    assert summary["paused"] is True and summary["jobs"] == {"done": 2, "pending": 3}
+    row = conn.execute("SELECT status, until FROM runs").fetchone()
+    assert tuple(row) == ("until", "2026-09-24T06:59:00")
+
+
+def test_set_until_can_clear_the_cli_until(conn, tmp_path):
+    now = datetime(2026, 9, 24, 6, 58)
+    act(conn, "set-until", "run:1", {"until": None})
+    summary = go(conn, tmp_path, Fake(), until=now, clock=lambda: now)
+    assert summary["paused"] is False and summary["jobs"] == {"done": 5}
+
+
+def test_run_actions_for_another_run_are_dropped(conn, tmp_path):
+    act(conn, "pause-run", "run:99")
+    summary = go(conn, tmp_path, Fake(), sleep=lambda s: pytest.fail("paused by a stale action"))
+    assert summary["jobs"] == {"done": 5}
+    assert conn.execute("SELECT consumed_at IS NOT NULL FROM review_actions").fetchone()[0] == 1
+
+
+def test_run_actions_stay_queued_outside_a_run(conn):
+    act(conn, "pause-run", "run:1")
+    assert run.consume_actions(conn, log=lambda _: None) == 0
+
+
+def test_runs_table_records_history(conn, tmp_path):
+    go(conn, tmp_path, Fake())
+    act(conn, "retry-line", "1")
+    with pytest.raises(KeyboardInterrupt):
+        go(conn, tmp_path, Fake(kill_on_call=1), until=datetime(2030, 1, 1, 7, 0))
+    rows = conn.execute("SELECT pid, workers, status, until, summary IS NOT NULL, ended_at IS NOT NULL,"
+                        " last_heartbeat IS NOT NULL FROM runs ORDER BY id").fetchall()
+    assert [tuple(r) for r in rows] == [(os.getpid(), 1, "finished", None, 1, 1, 1),
+                                        (os.getpid(), 1, "killed", "2030-01-01T07:00:00", 0, 1, 1)]
+    assert json.loads(conn.execute("SELECT summary FROM runs WHERE id = 1").fetchone()[0])["jobs"] == {"done": 5}
 
 
 def test_parallel_workers_share_one_writer(conn, tmp_path):
