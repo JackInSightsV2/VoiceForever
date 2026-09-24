@@ -1,2 +1,7 @@
 .vscode/
 .DS_Store
+build/
+data/
+.venv/
+__pycache__/
+*.pyc
