@@ -6,6 +6,7 @@ requires-python = ">=3.12"
 dependencies = [
     "misaki[en]>=0.9.4",
     "mlx-audio>=0.5.6",
+    "transformers>=5",
 ]
 
 [project.scripts]
