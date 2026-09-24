@@ -1,6 +1,6 @@
 ## Interface: 16001
 ## Title: VoiceForever
-## Notes: Voice acting for quest text. Install Voice Packs for the audio.
+## Notes: Voice acting for quest text and gossip. Install Voice Packs for the audio.
 ## Version: 0.1.0
 ## SavedVariables: VoiceForeverDB
 

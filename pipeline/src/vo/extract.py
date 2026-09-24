@@ -11,7 +11,7 @@ import sqlite3
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
-from vo import drift, quests, text
+from vo import drift, gossip, quests, text
 from vo.display import Display, Displays
 from vo.questie import Questie
 
@@ -400,6 +400,7 @@ def extract_all(conn: sqlite3.Connection, world: sqlite3.Connection, questie: Qu
             if zone and zone > 0:
                 quest_zones[n][zone] += 1
     _write(conn, npcs, spawns, wanted, Zones(questie, spawns, instance_zones(world), quest_zones))
+    gossip.update_patterns(conn)
     return {"npcs": len(npcs), "lines": len(wanted), "quests": len(live), "dropped": dict(dropped)}
 
 
