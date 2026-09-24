@@ -2,7 +2,7 @@ import sqlite3
 
 import pytest
 
-from vo import db, quests, source, text
+from vo import db, quests, source
 
 
 @pytest.fixture
@@ -46,8 +46,11 @@ def test_extract_detail_stores_line_once(world, tmp_path):
 def test_extract_detail_splits_player_gender(world, tmp_path):
     conn = db.connect(tmp_path / "vo.sqlite")
     quests.extract_detail(conn, world, 9)
-    rows = conn.execute("SELECT npc_id, player_gender, tts_text FROM lines ORDER BY player_gender").fetchall()
-    assert [tuple(r) for r in rows] == [(None, "f", "Hello madam, friend."), (None, "m", "Hello sir, friend.")]
+    rows = conn.execute("SELECT npc_id, player_gender, raw_text, tts_text FROM lines ORDER BY player_gender").fetchall()
+    assert [tuple(r) for r in rows] == [
+        (None, "f", "Hello $gsir:madam;, $N.", "Hello madam, friend."),
+        (None, "m", "Hello $gsir:madam;, $N.", "Hello sir, friend."),
+    ]
 
 
 def test_extract_unknown_quest(world, tmp_path):
@@ -55,5 +58,7 @@ def test_extract_unknown_quest(world, tmp_path):
         quests.extract_detail(db.connect(tmp_path / "vo.sqlite"), world, 1)
 
 
-def test_gender_variants_without_token():
-    assert text.gender_variants("No tokens.") == {None: "No tokens."}
+def test_extract_keeps_raw_tokens(world, tmp_path):
+    conn = db.connect(tmp_path / "vo.sqlite")
+    quests.extract_detail(conn, world, 783)
+    assert conn.execute("SELECT raw_text FROM lines").fetchone()[0].startswith("Young $c, there is work.$B$B")

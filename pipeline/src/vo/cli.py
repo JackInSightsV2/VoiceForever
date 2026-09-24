@@ -20,6 +20,7 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("fetch", help="download the VMaNGOS SQLite snapshot into data/vmangos")
     p = sub.add_parser("extract", help="extract quest detail text into lines")
     p.add_argument("--quest", type=int, action="append", required=True)
+    sub.add_parser("prep", help="recompute every line's tts_text from its raw text")
     p = sub.add_parser("generate", help="render audio for lines without it")
     p.add_argument("--voice", default=None, help="Kokoro voice (default am_michael)")
     p = sub.add_parser("package", help="build a Voice Pack into build/packs")
@@ -39,6 +40,9 @@ def main(argv: list[str] | None = None) -> None:
         conn, world = db.connect(args.db), source.open_world(args.world)
         for q in args.quest:
             print(f"quest {q}: lines {quests.extract_detail(conn, world, q)}")
+    elif args.command == "prep":
+        from vo import prep
+        print(f"tts_text updated for {prep.prepare_lines(db.connect(args.db))} lines")
     elif args.command == "generate":
         from vo import tts
         for path in tts.generate(db.connect(args.db), BUILD / "audio", args.voice or tts.DEFAULT_VOICE):
