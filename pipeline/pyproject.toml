@@ -3,7 +3,10 @@ name = "vo"
 version = "0.1.0"
 description = "VoiceForever offline voice pipeline"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "misaki[en]>=0.9.4",
+    "mlx-audio>=0.5.6",
+]
 
 [project.scripts]
 vo = "vo.cli:main"
