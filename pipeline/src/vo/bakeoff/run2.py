@@ -148,6 +148,9 @@ def render(a: round2.Approach, out: Path, results: dict, chains: dict, dsp_refs:
         save_results(out, results)
         return
 
+    if a.engine == "seedvc":
+        return render_seedvc(a, jobs, out, results, dsp_refs, check, log)
+
     from vo.bakeoff import engines2
 
     mx.reset_peak_memory()
@@ -180,6 +183,47 @@ def render(a: round2.Approach, out: Path, results: dict, chains: dict, dsp_refs:
     save_results(out, results)
     del engine
     _free()
+
+
+def render_seedvc(a, jobs, out: Path, results: dict, dsp_refs: dict, check: Checker, log) -> None:
+    """Seed-VC runs in its own PyTorch venv (SEEDVC_DIR), all jobs in one subprocess."""
+    import os
+    import subprocess
+    import tempfile
+
+    root = os.environ.get("SEEDVC_DIR")
+    if not root or not Path(root, ".venv/bin/python").exists():
+        results["approaches"][a.id] = {"error": "SEEDVC_DIR not set to a Seed-VC checkout with a .venv (see note)"}
+        log(f"{a.id}: skipped, SEEDVC_DIR not set")
+        return
+    src = results["clips"][a.source]
+    spec = {"diffusion_steps": a.settings["diffusion_steps"], "jobs": [
+        {"source": str((out / src[line.key]["file"]).resolve()), "target": str(dsp_refs[line.voice].resolve()),
+         "out": str(wav.resolve())} for line, wav in jobs if line.key in src]}
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        json.dump(spec, f)
+    driver = Path(__file__).with_name("seedvc_driver.py")
+    walls = {}
+    proc = subprocess.Popen([str(Path(root, ".venv/bin/python")), str(driver), f.name], cwd=root,
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    for row in proc.stdout:
+        if row.startswith("{"):
+            r = json.loads(row)
+            walls[r["out"]] = r["wall_s"]
+            log(f"{a.id}: converted {Path(r['out']).parent.name}/{Path(r['out']).name}")
+    if proc.wait() != 0 and not walls:
+        results["approaches"][a.id] = {"error": f"Seed-VC driver exited {proc.returncode}"}
+        return
+    clips = results["clips"][a.id]
+    for line, wav in jobs:
+        key = str(wav.resolve())
+        if key not in walls:
+            continue
+        audio, sr = _read(wav)
+        clips[line.key] = _clip(out, wav, len(audio) / sr, walls[key] + src[line.key]["wall_s"], line, check)
+        log(f"{a.id} {line.key}: WER {clips[line.key]['wer']:.0%} {clips[line.key]['features']}")
+    results["approaches"][a.id] = {"note": "wall includes the cb-vox render and the first job's model load"}
+    save_results(out, results)
 
 
 def _clip(out: Path, wav: Path, seconds: float, wall: float, line: round2.Line, check: Checker) -> dict:

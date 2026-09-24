@@ -61,15 +61,16 @@ the words and another the timbre. <a href="https://github.com/resemble-ai/chatte
 <li><b>IndexTTS-2</b> separates timbre from emotion, which suits game characters, but mlx-audio only ports v1
 (<a href="https://arxiv.org/abs/2506.21619">arXiv 2506.21619</a>). <b>Maya1</b> is the one model card that demos
 demon and villain voices (Apache-2.0), but it wouldn't run here (see below). <b>Higgs Audio v2</b> ran but didn't hold the reference voice.</li>
-<li><b>Voice conversion</b>: Seed-VC (GPL-3.0 code) and RVC (needs about 10 minutes of target audio per voice) aren't in mlx-audio.
-Chatterbox's S3Gen does the same job in MLX.</li>
+<li><b>Voice conversion</b>: Seed-VC (zero-shot, GPL-3.0, <a href="https://github.com/Plachtaa/seed-vc">repo</a>)
+runs in PyTorch on MPS and is tested here. RVC needs about 10 minutes of target audio per voice, so it doesn't suit
+thousands of NPC Voices. Chatterbox's S3Gen stage does zero-shot VC in MLX.</li>
 <li><b>DSP for creatures</b>: no source shows an open model producing a convincing orc timbre without help. The documented
 route for dragon and demon voices is pitch and formant shifting plus saturation and EQ (Praat/Parselmouth + Pedalboard),
 e.g. VoiceDesigner, <a href="https://arxiv.org/abs/2608.13613">arXiv 2608.13613</a>.</li>
 </ul>
 <p><b>Shortlist tested here:</b> (1) better references from VoxCPM2 and Qwen3 VoiceDesign, best of 4 by ear-proxies;
 (2) cloning them with Chatterbox, VoxCPM2, Qwen3 Base, Fish S2 Pro and OmniVoice; (3) a per-race DSP chain on Chatterbox output;
-(4) voice conversion inside Chatterbox toward a DSP-shaped timbre; (5) VoxCPM2 designing every line directly, as a
+(4) voice conversion toward a DSP-shaped timbre, both inside Chatterbox (cb-vc) and with Seed-VC; (5) VoxCPM2 designing every line directly, as a
 fantasy-ness ceiling that can't give consistent NPC Voices.</p>
 """
 

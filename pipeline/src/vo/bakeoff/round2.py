@@ -180,6 +180,15 @@ APPROACHES: tuple[Approach, ...] = (
              "reference (accent, prosody); the S3Gen flow decoder (Chatterbox's VC stage) on that reference after "
              "the race DSP chain (timbre). One pass, no post-processing artefacts on the output.",
              dsp=True),
+    Approach("seedvc", "Seed-VC: cb-vox converted to DSP'd timbre", "seedvc", "vox",
+             "GPL-3.0 (Plachtaa/seed-vc code and weights); converted audio is not restricted. "
+             "Uses the Whisper-small encoder (MIT), CAMPPlus and BigVGAN (MIT).",
+             "Plachta/Seed-VC (v1 DiT, 22.05 kHz)", {"diffusion_steps": 25, "inference_cfg_rate": 0.7},
+             "PyTorch on MPS, in its own venv (set SEEDVC_DIR to a checkout of github.com/Plachtaa/seed-vc @51383ef "
+             "with .venv: uv venv -p 3.11; uv pip install torch torchaudio librosa==0.10.2 munch einops "
+             "descript-audio-codec pyyaml hydra-core transformers==4.46.3 'huggingface-hub<1' accelerate soundfile "
+             "scipy 'numpy<2'). Source: the cb-vox clip; target timbre: the DSP'd VoxCPM2 reference.",
+             dsp=True, source="cb-vox"),
     Approach("vox", "VoxCPM2 clone ← VoxCPM2 ref", "voxcpm", "vox", "Apache-2.0 (openbmb/VoxCPM2)",
              "mlx-community/VoxCPM2-bf16", {"mode": "ref_audio + prompt continuation", "inference_timesteps": 10,
                                              "cfg_value": 2.0},
@@ -226,8 +235,6 @@ NOT_RUN: tuple[tuple[str, str, str], ...] = (
     ("Higgs Audio v2 (bosonai/higgs-audio-v2-generation-3B-base)", "Boson Higgs Audio 2 Community Licence",
      "Runs (mlx-community/higgs-audio-v2-3B-mlx-q8, RTF ~2.9) but did not hold the reference voice in a probe: "
      "orc reference f0 81 Hz, output 175 Hz."),
-    ("Seed-VC (Plachta/Seed-VC)", "GPL-3.0 (code); audio output unrestricted",
-     "Not in mlx-audio; the VC comparison uses Chatterbox's own S3Gen VC stage instead (approach cb-vc)."),
     ("Parler-TTS, Spark-TTS", "Apache-2.0 / CC-BY-NC-SA-4.0",
      "Not in mlx-audio; older and weaker than VoxCPM2/Qwen3 for description-driven design."),
 )
