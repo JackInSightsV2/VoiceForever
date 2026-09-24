@@ -16,6 +16,8 @@ vo = "vo.cli:main"
 
 [dependency-groups]
 dev = ["pytest>=8"]
+# Heavy local-model deps for `vo bakeoff` only: uv run --group bakeoff vo bakeoff
+bakeoff = ["mlx-audio[tts]>=0.5.6", "f5-tts-mlx>=0.2.6", "soundfile", "misaki[en]"]
 
 [build-system]
 requires = ["hatchling"]
