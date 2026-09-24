@@ -46,8 +46,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--no-retry-quarantined", action="store_true", help="leave quarantined lines alone this run")
     p = sub.add_parser("ingest", help="import Capture records from Core Addon SavedVariables files")
     p.add_argument("files", type=Path, nargs="+", metavar="SAVEDVARIABLES")
-    p = sub.add_parser("package", help="build a Voice Pack into build/packs")
-    p.add_argument("--pack", default=None)
+    p = sub.add_parser("package", help="build the Voice Packs into build/packs and report lines per pack")
+    p.add_argument("--pack", default=None, help="build only this pack, e.g. VoiceForever_Alliance_1-10")
     p = sub.add_parser("install", help="symlink the Core Addon and built packs into an AddOns dir")
     p.add_argument("addons_dir", type=Path)
     p = sub.add_parser("dashboard", help="serve the review dashboard (Bun) on localhost")
@@ -106,8 +106,21 @@ def main(argv: list[str] | None = None) -> None:
         if rejected:
             sys.exit(1)
     elif args.command == "package":
-        from vo import package
-        print(package.package(db.connect(args.db), BUILD / "packs", args.pack or package.DEFAULT_PACK))
+        from vo import package, packs, source
+        if args.pack and args.pack not in packs.all_packs():
+            sys.exit(f"unknown pack {args.pack}; one of: {', '.join(packs.all_packs())}")
+        conn = db.connect(args.db)
+        if args.world.exists():
+            src = packs.load_source(source.open_world(args.world))
+        else:
+            print(f"warning: no world DB at {args.world}; packs assigned from NPC zones and levels only",
+                  file=sys.stderr)
+            src = None
+        built = package.package(conn, BUILD / "packs", src, args.pack)
+        print(f"{'pack':<30} {'lines':>7} {'voiced':>7} {'MB':>8}")
+        for pack, n in package.report(conn, src).items():
+            if not args.pack or pack == args.pack:
+                print(f"{pack:<30} {n['lines']:>7} {n['voiced']:>7} {n['mb']:>8.1f}  {built.get(pack, '')}")
     elif args.command == "install":
         from vo import install
         for link in install.install(args.addons_dir, CORE_ADDON, BUILD / "packs"):
