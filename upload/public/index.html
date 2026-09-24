@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>VoiceForever Capture Upload</title>
+  <style>
+    :root {
+      --bg: #f6f4ef; --panel: #fffdf8; --ink: #1d1b16; --muted: #6b665a; --line: #d9d3c4;
+      --accent: #8a5a12; --accent-soft: #f3e6cf; --ok: #2f6b3a; --err: #9b2c2c;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #16150f; --panel: #1f1d17; --ink: #ece7da; --muted: #a39d8d; --line: #3a362b;
+              --accent: #e0aa55; --accent-soft: #3a2e1a; --ok: #7cc48a; --err: #f08a8a; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--ink);
+           font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    main { max-width: 640px; margin: 0 auto; padding: 40px 16px 64px; }
+    h1 { font-size: 1.6rem; margin: 0 0 4px; }
+    .lede { color: var(--muted); margin: 0 0 28px; }
+    #drop { display: block; border: 2px dashed var(--line); border-radius: 12px; background: var(--panel);
+            padding: 36px 20px; text-align: center; cursor: pointer; transition: border-color .15s, background .15s; }
+    #drop:hover, #drop:focus-within, #drop.over { border-color: var(--accent); background: var(--accent-soft); }
+    #drop strong { display: block; font-size: 1.1rem; }
+    #drop span { color: var(--muted); font-size: .9rem; }
+    #file { position: absolute; width: 1px; height: 1px; opacity: 0; }
+    #status { min-height: 1.5em; margin: 16px 0 0; font-weight: 500; }
+    #status.ok { color: var(--ok); } #status.err { color: var(--err); }
+    h2 { font-size: 1.05rem; margin: 36px 0 8px; }
+    ol { padding-left: 1.3em; } li { margin: 6px 0; }
+    code { font: .85rem/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--panel);
+           border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; overflow-wrap: anywhere; }
+    .path { display: block; padding: 8px 10px; margin: 4px 0 10px; }
+    .small { color: var(--muted); font-size: .9rem; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Share your Capture</h1>
+  <p class="lede">VoiceForever records dialogue it has no voice for yet. Upload your saved addon data and new lines can be voiced in a future Voice Pack.</p>
+
+  <label id="drop">
+    <input id="file" type="file" accept=".lua">
+    <strong>Drop VoiceForever.lua here</strong>
+    <span>or click to choose the file (up to 5 MB)</span>
+  </label>
+  <p id="status" role="status" aria-live="polite"></p>
+
+  <h2>Where is the file?</h2>
+  <ol>
+    <li>In game, type <code>/vf export</code> to see how many records you have, then <code>/reload</code> or log out so the game writes them to disk.</li>
+    <li>Open your World of Warcraft folder, then the game folder you play from, then
+      <code class="path">WTF/Account/&lt;ACCOUNT&gt;/SavedVariables/VoiceForever.lua</code>
+      <span class="small">Windows: usually under <code>C:\Program Files (x86)\World of Warcraft\</code>.
+      macOS: usually under <code>/Applications/World of Warcraft/</code>.
+      &lt;ACCOUNT&gt; is your account name in capitals.</span></li>
+    <li>Upload <code>VoiceForever.lua</code> itself, not <code>VoiceForever.lua.bak</code> or a file from another addon.</li>
+  </ol>
+  <p class="small">The file holds the NPC dialogue you saw, the NPCs' names and where you met them, and your client's language. Your character's name is in the dialogue text as the game showed it. Uploads are reviewed before anything is voiced; nothing is published automatically.</p>
+</main>
+<script>
+  const drop = document.getElementById("drop"), input = document.getElementById("file"),
+        status = document.getElementById("status"), MAX = 5 * 1024 * 1024;
+
+  function say(text, kind) { status.textContent = text; status.className = kind || ""; }
+
+  async function upload(file) {
+    if (!file) return;
+    if (file.size > MAX) return say(`${file.name} is too large (the limit is 5 MB).`, "err");
+    say(`Uploading ${file.name}…`);
+    try {
+      const r = await fetch("/api/upload", { method: "POST", body: file,
+                                            headers: { "Content-Type": "application/octet-stream" } });
+      const body = await r.json().catch(() => ({ error: `Upload failed (HTTP ${r.status}).` }));
+      if (!r.ok) return say(body.error, "err");
+      say(body.duplicate ? "Thanks! We already had this exact file, so nothing new was added."
+                         : `Thanks! ${body.records} Capture record${body.records === 1 ? "" : "s"} received.`, "ok");
+    } catch {
+      say("Couldn't reach the upload server. Check your connection and try again.", "err");
+    }
+  }
+
+  input.addEventListener("change", () => { upload(input.files[0]); input.value = ""; });
+  for (const ev of ["dragenter", "dragover"]) drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("over"); });
+  for (const ev of ["dragleave", "drop"]) drop.addEventListener(ev, () => drop.classList.remove("over"));
+  drop.addEventListener("drop", (e) => { e.preventDefault(); upload(e.dataTransfer.files[0]); });
+</script>
+</body>
+</html>
