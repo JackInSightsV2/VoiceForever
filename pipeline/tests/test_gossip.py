@@ -5,7 +5,7 @@ import gossip_harness
 from conftest import lua_literal
 from vo import db, gossip, package
 
-PACK = "VoiceForever_Test"
+PACK = "VoiceForever_Neutral_1-10"  # NPCs with no faction template or zone
 
 
 def test_pattern_escapes_magic_and_wildcards_tokens():
@@ -67,7 +67,7 @@ def built_pack(tmp_path):
                      rows)
     gossip.update_patterns(conn)
     conn.executemany("INSERT INTO audio VALUES (?, 'kokoro:am_michael', ?, 1.0, 'done')", [(r[0], str(ogg)) for r in rows])
-    return package.package(conn, tmp_path / "packs", PACK)
+    return package.package(conn, tmp_path / "packs")[PACK]
 
 
 def audio(line_id: int) -> str:

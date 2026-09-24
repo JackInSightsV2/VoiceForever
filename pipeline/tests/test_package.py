@@ -3,7 +3,7 @@ import pytest
 from conftest import CORE, lua_literal
 from vo import db, drift, install, package
 
-PACK = "VoiceForever_Test"
+PACK = "VoiceForever_Neutral_1-10"  # NPCs with no faction template or zone
 
 
 def test_build_index_files_genderless_line_under_both_genders():
@@ -34,14 +34,14 @@ def built_pack(tmp_path):
     ogg.write_bytes(b"OggS")
     conn.execute("INSERT INTO lines (id, npc_id, type, quest_id, raw_text) VALUES (1, 823, 'quest_detail', 783, 'x')")
     conn.execute("INSERT INTO audio VALUES (1, 'kokoro:am_michael', ?, 1.0, 'done')", (str(ogg),))
-    return package.package(conn, tmp_path / "packs", PACK)
+    return package.package(conn, tmp_path / "packs")[PACK]
 
 
 def test_package_writes_addon(built_pack):
     assert (built_pack / "audio" / "823" / "1.ogg").read_bytes() == b"OggS"
     assert "## Dependencies: VoiceForever" in (built_pack / f"{PACK}.toc").read_text()
     index = (built_pack / "index.lua").read_text()
-    assert '"Interface\\\\AddOns\\\\VoiceForever_Test\\\\audio\\\\823\\\\1.ogg"' in index
+    assert '"Interface\\\\AddOns\\\\VoiceForever_Neutral_1-10\\\\audio\\\\823\\\\1.ogg"' in index
     assert f'hash = "{drift.text_hash("x")}"' in index
 
 
@@ -56,7 +56,7 @@ def test_core_addon_plays_pack_audio_on_quest_detail(built_pack, lua):
       fire("QUEST_DETAIL")
       emit(WOW.played) emit(WOW.stopped) emit(#VoiceForeverDB.capture)
     """)
-    assert played == ["Interface\\AddOns\\VoiceForever_Test\\audio\\823\\1.ogg|Dialog"]
+    assert played == ["Interface\\AddOns\\VoiceForever_Neutral_1-10\\audio\\823\\1.ogg|Dialog"]
     assert stopped == [42]
     assert captured == 1  # quest 1 is a miss; quest 783 matched its hash
 
@@ -100,7 +100,7 @@ def parts_pack(tmp_path):
         conn.execute("INSERT INTO lines (id, npc_id, type, quest_id, player_gender, raw_text) VALUES (?, ?, ?, ?, ?, ?)",
                      (line_id, npc, type_, quest, gender, raw))
         conn.execute("INSERT INTO audio VALUES (?, 'kokoro:x', ?, 1.0, 'done')", (line_id, str(ogg)))
-    return package.package(conn, tmp_path / "packs", PACK)
+    return package.package(conn, tmp_path / "packs")[PACK]
 
 
 def _file(npc, line_id):

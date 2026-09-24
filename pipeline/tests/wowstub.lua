@@ -7,20 +7,55 @@ WOW = {
   text = { quest = "", objective = "", progress = "", reward = "", greeting = "", gossip = "" },
   map = 1429, pos = { 0.48213, 0.41987 },
   locale = "enUS", now = 1790000000,
+  inRange = true, combat = false,
+  cvars = { Sound_DialogVolume = "1" },
   played = {}, stopped = {}, printed = {},
 }
 
-local frame
-function CreateFrame()
-  frame = { events = {} }
-  function frame:RegisterEvent(e) self.events[e] = true end
-  function frame:SetScript(_, f) self.handler = f end
-  return frame
+-- Frames: scripts by name, HookScript chains, Show/Hide fire OnShow/OnHide. Every frame is kept in FRAMES.
+FRAMES = {}
+local Frame = {}
+Frame.__index = Frame
+function Frame:RegisterEvent(e) self.events[e] = true end
+function Frame:SetScript(name, f) self.scripts[name] = f end
+function Frame:GetScript(name) return self.scripts[name] end
+function Frame:HookScript(name, f)
+  local prev = self.scripts[name]
+  self.scripts[name] = function(...) if prev then prev(...) end f(...) end
 end
+function Frame:Show() local was = self.shown; self.shown = true; if not was and self.scripts.OnShow then self.scripts.OnShow(self) end end
+function Frame:Hide() local was = self.shown; self.shown = false; if was and self.scripts.OnHide then self.scripts.OnHide(self) end end
+function Frame:IsShown() return self.shown end
+function Frame:SetText(t) self.text = t end
+function Frame:SetSize() end
+function Frame:SetPoint() end
+function Frame:SetEnabled(on) self.enabled = on end
+function Frame:Click() self.scripts.OnClick(self, "LeftButton") end
+
+function CreateFrame(kind, name, parent, template)
+  local f = setmetatable({ kind = kind, name = name, parent = parent, template = template, events = {}, scripts = {},
+    shown = kind ~= "Button" or nil }, Frame)
+  FRAMES[#FRAMES + 1] = f
+  if name then _G[name] = f end
+  return f
+end
+-- Blizzard's quest and gossip windows, closed.
+QuestFrame = CreateFrame("Frame", "QuestFrame"); QuestFrame.shown = false
+GossipFrame = CreateFrame("Frame", "GossipFrame"); GossipFrame.shown = false
 
 function fire(event, ...)
-  assert(frame.events[event], "event not registered: " .. event)
-  frame.handler(frame, event, ...)
+  local handled = false
+  for _, f in ipairs(FRAMES) do
+    if f.events[event] then f.scripts.OnEvent(f, event, ...); handled = true end
+  end
+  assert(handled, "event not registered: " .. event)
+end
+
+-- Run every OnUpdate script as if `elapsed` seconds passed.
+function tick(elapsed)
+  for _, f in ipairs(FRAMES) do
+    if f.scripts.OnUpdate then f.scripts.OnUpdate(f, elapsed) end
+  end
 end
 
 function load_addon()
@@ -28,7 +63,42 @@ function load_addon()
   fire("ADDON_LOADED", "VoiceForever")
 end
 
-function PlaySoundFile(path, channel) WOW.played[#WOW.played + 1] = path .. "|" .. channel; return true, 42 end
+function PlaySoundFile(path, channel)
+  WOW.played[#WOW.played + 1] = path .. "|" .. channel
+  WOW.handle = (WOW.handle or 41) + 1
+  return true, WOW.handle
+end
+function GetCVar(name) return WOW.cvars[name] end
+function SetCVar(name, value) WOW.cvars[name] = tostring(value) end
+function CheckInteractDistance(unit, index) assert(not WOW.combat, "CheckInteractDistance in combat") return WOW.inRange end
+function InCombatLockdown() return WOW.combat end
+function UnitExists(u) return u == "player" or (u == "npc" and WOW.npc ~= nil) end
+
+-- The modern Settings API (retail 11.x signatures), recording what the addon registers.
+Settings = {
+  VarType = { Boolean = "boolean", Number = "number" },
+  registered = {}, categories = {},
+  RegisterVerticalLayoutCategory = function(name)
+    local c = { name = name }
+    function c:GetID() return self.name end
+    return c, {}
+  end,
+  RegisterProxySetting = function(category, variable, varType, name, default, get, set)
+    local s = { category = category.name, variable = variable, varType = varType, name = name, default = default }
+    function s:GetValue() return get() end
+    function s:SetValue(v) set(v) end
+    Settings.registered[variable] = s
+    return s
+  end,
+  CreateCheckbox = function(_, setting, tooltip) setting.control, setting.tooltip = "checkbox", tooltip end,
+  CreateSliderOptions = function(min, max, step)
+    return { min = min, max = max, step = step, SetLabelFormatter = function(self, _, f) self.format = f end }
+  end,
+  CreateSlider = function(_, setting, options, tooltip) setting.control, setting.options = "slider", options end,
+  RegisterAddOnCategory = function(category) Settings.categories[#Settings.categories + 1] = category.name end,
+  OpenToCategory = function(id) WOW.opened = id end,
+}
+MinimalSliderWithSteppersMixin = { Label = { Right = 3 } }
 function StopSound(h) WOW.stopped[#WOW.stopped + 1] = h end
 function GetQuestID() return WOW.quest end
 function GetQuestText() return WOW.text.quest end
