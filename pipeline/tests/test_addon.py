@@ -120,3 +120,4 @@ def test_export_prints_saved_variables_location(lua):
     """)
     assert printed[0].startswith("VoiceForever: 1 Capture records (0 Drift)")
     assert printed[1].endswith("\\WTF\\Account\\<ACCOUNT>\\SavedVariables\\VoiceForever.lua")
+    assert printed[2] == "Upload that file at https://voiceforever.example/upload"

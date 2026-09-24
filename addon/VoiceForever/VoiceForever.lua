@@ -154,6 +154,8 @@ frame:SetScript("OnEvent", function(_, event, arg1)
   end
 end)
 
+VF.UPLOAD_URL = "https://voiceforever.example/upload" -- placeholder until the Capture upload page is hosted
+
 SLASH_VOICEFOREVER1 = "/vf"
 SlashCmdList.VOICEFOREVER = function(msg)
   if msg == "debug" then
@@ -166,7 +168,7 @@ SlashCmdList.VOICEFOREVER = function(msg)
     end
     print(("VoiceForever: %d Capture records (%d Drift), written on logout or /reload to:"):format(#records, drift))
     print("World of Warcraft\\<game folder>\\WTF\\Account\\<ACCOUNT>\\SavedVariables\\VoiceForever.lua")
-    print("Upload that file on the VoiceForever upload page.")
+    print("Upload that file at " .. VF.UPLOAD_URL)
   else
     print("VoiceForever: packs " .. (#VF.packs > 0 and table.concat(VF.packs, ", ") or "none")
       .. "; /vf debug, /vf export")
