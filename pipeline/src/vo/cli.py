@@ -121,11 +121,11 @@ def main(argv: list[str] | None = None) -> None:
             sys.exit(f"vo prepare: {e}")
         print(prepare.summary_text(summary))
     elif args.command in ("run", "generate"):
-        from vo import asr, lock, run, tts
+        from vo import archetypes, asr, lock, run, tts
         conn = db.connect(args.db)
         try:
             approved = lock.require(conn, lock.path())
-        except lock.LockError as e:
+        except (lock.LockError, archetypes.UnmappedRace) as e:
             sys.exit(f"vo run refuses to start: {e}")
         os.environ[lock.ENV] = str(lock.path())  # spawned workers load the same lock
         voice = args.voice or tts.DEFAULT_VOICE
