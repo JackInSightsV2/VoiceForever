@@ -30,12 +30,20 @@ def main(argv: list[str] | None = None) -> None:
     g.add_argument("--all", action="store_true", help="all Core Content: NPCs, spawns, Quest Text, Gossip")
     sub.add_parser("stats", help="summarise NPCs, lines and words in the pipeline DB")
     sub.add_parser("prep", help="recompute every line's tts_text from its raw text")
+    p = sub.add_parser("prepare", help="Approval Gate: render anchor Candidates per Archetype, apply approvals,"
+                                       " write approved_voices.json once all are approved")
+    p.add_argument("--archetype", action="append", help="only render this Archetype (repeatable), e.g. orc_f")
+    p.add_argument("--candidates", type=int, default=8, help="Candidates per Archetype (default 8)")
+    p.add_argument("--samples", type=int, default=3, help="sample lines per Candidate, as continuation (default 3)")
+    p.add_argument("--asr-model", default=None, help="Whisper model (mlx-audio)")
+    p.add_argument("--list", action="store_true", help="list the Archetypes and their race labels, render nothing")
     p = sub.add_parser("run", aliases=["generate"], help="work the generation queue unattended (resumable)")
     p.add_argument("--voice", default=None,
-                   help="default voice for NPCs without one: Kokoro voice or <backend>:<voice> (default am_michael)")
+                   help="fallback voice for NPCs whose Archetype has no approved anchor: Kokoro voice or"
+                        " <backend>:<voice> (default am_michael)")
     p.add_argument("--narrator-voice", default=None,
                    help="voice for lines with no NPC (object and item quests): Kokoro voice or <backend>:<voice>"
-                        " (default bm_george, until the Approval Gate sets one)")
+                        " (default: the lock's Narrator, kokoro:bm_lewis)")
     p.add_argument("--workers", type=int, default=3, help="parallel render workers (default 3)")
     p.add_argument("--until", metavar="HH:MM", help="stop taking new lines at this local time; rerun to resume")
     p.add_argument("--wer-threshold", type=float, default=0.2, help="max ASR word error rate before a retake")
@@ -54,6 +62,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--port", type=int, default=8787)
     p.add_argument("--host", default="127.0.0.1", help="bind address (e.g. a Tailscale IP to check from a phone)")
     p.add_argument("--audio", type=Path, default=BUILD / "audio", help="audio dir to serve for playback")
+    p.add_argument("--candidates", type=Path, default=BUILD / "candidates", help="Approval Gate audio (vo prepare)")
     bo = sub.add_parser("bakeoff", help="render the model bake-off and its listening page (needs --group bakeoff)")
     bo.add_argument("--round", type=int, choices=(1, 2, 3, 4, 5), default=1,
                     help="1: model comparison; 2: fantasy race voices (designers, cloners, DSP, VC); "
@@ -98,18 +107,40 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "prep":
         from vo import prep
         print(f"tts_text updated for {prep.prepare_lines(db.connect(args.db))} lines")
+    elif args.command == "prepare":
+        from vo import archetypes, asr, lock, prepare
+        conn = db.connect(args.db)
+        if args.list:
+            for a in archetypes.derive(conn):
+                races = ", ".join(f"{r} ({n})" for r, n in a.races.items())
+                print(f"{a.id:<22} {a.label:<28} {a.npcs:>4} NPCs {a.lines:>5} lines  {races}")
+            return
+        try:
+            summary = prepare.prepare(conn, BUILD / "candidates", only=args.archetype, candidates=args.candidates,
+                                      samples=args.samples, asr_model=args.asr_model or asr.DEFAULT_MODEL,
+                                      lock_path=lock.path())
+        except (archetypes.UnmappedRace, ValueError) as e:
+            sys.exit(f"vo prepare: {e}")
+        print(prepare.summary_text(summary))
     elif args.command in ("run", "generate"):
-        from vo import asr, run, tts
-        voice, narrator = args.voice or tts.DEFAULT_VOICE, args.narrator_voice or tts.NARRATOR_VOICE_ID
+        from vo import archetypes, asr, lock, run, tts
+        conn = db.connect(args.db)
+        try:
+            approved = lock.require(conn, lock.path())
+        except (lock.LockError, archetypes.UnmappedRace) as e:
+            sys.exit(f"vo run refuses to start: {e}")
+        os.environ[lock.ENV] = str(lock.path())  # spawned workers load the same lock
+        voice = args.voice or tts.DEFAULT_VOICE
+        narrator = args.narrator_voice or approved.get("narrator", {}).get("voice_id") or tts.NARRATOR_VOICE_ID
         opts = dict(
-            voice_id=voice if ":" in voice else f"kokoro:{voice}",
+            voice_id=voice if ":" in voice else f"kokoro:{voice}", npc_voices=lock.npc_voice_ids(conn, approved),
             narrator_voice_id=narrator if ":" in narrator else f"kokoro:{narrator}", workers=args.workers,
             until=run.parse_until(args.until, datetime.now()) if args.until else None,
             wer_threshold=args.wer_threshold, asr_model=args.asr_model or asr.DEFAULT_MODEL,
             retry_quarantined=not args.no_retry_quarantined)
         signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))  # unwind: stop workers, release caffeinate
         with run.caffeinate(not args.no_caffeinate):
-            summary = run.run_notified(args.ntfy, lambda: run.run(db.connect(args.db), BUILD / "audio", **opts))
+            summary = run.run_notified(args.ntfy, lambda: run.run(conn, BUILD / "audio", **opts))
         print(run.summary_text(summary))
     elif args.command == "ingest":
         from vo import ingest, savedvars
@@ -151,6 +182,7 @@ def main(argv: list[str] | None = None) -> None:
             sys.exit("vo dashboard needs Bun: https://bun.sh")
         db.connect(args.db).close()  # create it and its tables (WAL) so the dashboard can open it read-only
         os.execv(bun, [bun, str(DASHBOARD / "server.ts"), "--db", str(args.db), "--audio", str(args.audio),
+                       "--candidates", str(args.candidates),
                        "--port", str(args.port), "--host", args.host])
     elif args.command == "bakeoff" and args.round == 5:
         from vo.bakeoff import run5

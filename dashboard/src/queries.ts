@@ -137,8 +137,8 @@ export function overview(db: Database, now: Date = new Date()) {
   };
 }
 
-/** Map a stored audio path to its URL under /audio/, if it exists inside the audio root. */
-export function audioUrl(audioRoot: string, path: string | null): string | null {
+/** Map a stored audio path to its URL under `prefix` (default /audio/), if it exists inside the root. */
+export function audioUrl(audioRoot: string, path: string | null, prefix = "/audio/"): string | null {
   if (!path || !existsSync(path)) return null;
   let root: string;
   try {
@@ -148,7 +148,7 @@ export function audioUrl(audioRoot: string, path: string | null): string | null 
   }
   const real = realpathSync(path);
   if (!real.startsWith(root + sep)) return null;
-  return "/audio/" + relative(root, real).split(sep).map(encodeURIComponent).join("/");
+  return prefix + relative(root, real).split(sep).map(encodeURIComponent).join("/");
 }
 
 export function quarantine(db: Database, audioRoot: string) {
@@ -186,5 +186,83 @@ export function quarantine(db: Database, audioRoot: string) {
           .map((q) => q.action),
       };
     }),
+  };
+}
+
+// --- Approval ------------------------------------------------------------------------------------------------------
+
+export const APPROVAL_ACTIONS = ["approve-candidate", "reject-candidate", "regenerate-archetype"] as const;
+
+const parseJson = (s: string | null, fallback: any) => {
+  try {
+    return s ? JSON.parse(s) : fallback;
+  } catch {
+    return fallback;
+  }
+};
+
+/** The Approval page: every Archetype with its current Candidates (anchor, metrics, sample lines), the fixed
+ * Narrator, progress, and queued (not yet applied by `vo prepare`) actions. Audio is served under /candidates/. */
+export function approval(db: Database, candidatesRoot: string) {
+  const url = (p: string | null) => audioUrl(candidatesRoot, p, "/candidates/");
+  const archetypes = db
+    .query(
+      `SELECT * FROM archetypes ORDER BY CASE kind WHEN 'narrator' THEN 0 WHEN 'race' THEN 1 ELSE 2 END, lines DESC, id`,
+    )
+    .all() as Row[];
+  const candidates = db.query("SELECT * FROM candidates ORDER BY archetype, generation, seed").all() as Row[];
+  const samples = db.query("SELECT * FROM candidate_samples ORDER BY candidate, idx").all() as Row[];
+  const queued = db
+    .query(
+      `SELECT id, action, target, payload, created_at FROM review_actions WHERE consumed_at IS NULL
+       AND action IN (${APPROVAL_ACTIONS.map(() => "?").join(",")}) ORDER BY id`,
+    )
+    .all(...APPROVAL_ACTIONS) as Row[];
+
+  const samplesBy = new Map<string, Row[]>();
+  for (const s of samples) {
+    const list = samplesBy.get(s.candidate) ?? [];
+    list.push({ idx: s.idx, line_id: s.line_id, text: s.text, url: url(s.path), duration_s: s.duration_s, asr: s.asr, wer: s.wer });
+    samplesBy.set(s.candidate, list);
+  }
+  const archOf = new Map(candidates.map((c) => [c.id, c.archetype]));
+  const queuedFor = (aid: string) =>
+    queued
+      .filter((q) => (q.action === "regenerate-archetype" ? q.target === aid : archOf.get(q.target) === aid))
+      .map((q) => ({ id: q.id, action: q.action, target: q.target, note: parseJson(q.payload, {}).note ?? null }));
+
+  let narrator: Row | null = null;
+  const out: Row[] = [];
+  for (const a of archetypes) {
+    const mine = candidates.filter((c) => c.archetype === a.id);
+    if (a.kind === "narrator") {
+      const c = mine[0];
+      narrator = {
+        id: a.id, label: a.label, description: a.description, lines: a.lines,
+        voice_id: c?.description ?? null, text: c?.anchor_text ?? null, url: c ? url(c.path) : null,
+      };
+      continue;
+    }
+    const current = mine.filter((c) => c.status !== "superseded" && (c.generation === a.generation || c.id === a.approved));
+    out.push({
+      id: a.id, label: a.label, kind: a.kind, gender: a.gender, races: parseJson(a.races, {}), npcs: a.npcs, lines: a.lines,
+      base_description: a.base_description, notes: parseJson(a.notes, []), description: a.description,
+      anchor_text: a.anchor_text, mode: a.mode, effect_chain: a.effect_chain, generation: a.generation,
+      approved: a.approved, approved_at: a.approved_at,
+      superseded: mine.length - current.length,
+      candidates: current.map((c) => ({
+        id: c.id, seed: c.seed, generation: c.generation, status: c.status, url: url(c.path), duration_s: c.duration_s,
+        f0: c.f0, hnr: c.hnr, centroid: c.centroid, asr: c.asr, wer: c.wer, samples: samplesBy.get(c.id) ?? [],
+      })),
+      queued: queuedFor(a.id),
+    });
+  }
+  const approved = out.filter((a) => a.approved).length;
+  const queuedApprovals = out.filter((a) => !a.approved && a.queued.some((q: Row) => q.action === "approve-candidate")).length;
+  return {
+    narrator,
+    progress: { approved, total: out.length, queued_approvals: queuedApprovals },
+    complete: out.length > 0 && approved === out.length,
+    archetypes: out,
   };
 }

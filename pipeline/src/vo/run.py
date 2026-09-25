@@ -63,14 +63,18 @@ class Result:
 # --- queue -----------------------------------------------------------------------------------------------------------
 
 def sync_jobs(conn: sqlite3.Connection, default_voice_id: str,
-              narrator_voice_id: str = tts.NARRATOR_VOICE_ID) -> int:
-    """Queue every line for its voice: the NPC's, else the default; lines with no NPC get the Narrator. A changed
-    tts_text or Delivery requeues the job and marks its old audio stale; jobs for deleted lines or a replaced voice are
-    dropped. Returns how many were (re)queued."""
-    wanted = {(r[0], r[1]): tts_hash(r[2], r[3]) for r in conn.execute(
-        "SELECT l.id, CASE WHEN l.npc_id IS NULL THEN ? ELSE COALESCE(v.voice_id, ?) END, l.tts_text, l.type"
-        " FROM lines l LEFT JOIN voices v ON v.npc_id = l.npc_id"
-        " WHERE COALESCE(l.tts_text, '') != ''", (narrator_voice_id, default_voice_id))}
+              narrator_voice_id: str = tts.NARRATOR_VOICE_ID, npc_voices: dict[int, str] | None = None) -> int:
+    """Queue every line for its voice. Lines with no NPC get the Narrator. An NPC line gets, in order: the NPC's own
+    voice (`voices.voice_id`: the per-NPC anchor hook, #13), its Archetype's approved anchor (`npc_voices`, from
+    approved_voices.json), else the default. A changed tts_text or Delivery requeues the job and marks its old audio
+    stale; jobs for deleted lines or a replaced voice are dropped. Returns how many were (re)queued."""
+    npc_voices = npc_voices or {}
+    wanted = {}
+    for line_id, npc_id, own, text, line_type in conn.execute(
+            "SELECT l.id, l.npc_id, v.voice_id, l.tts_text, l.type FROM lines l LEFT JOIN voices v ON v.npc_id = l.npc_id"
+            " WHERE COALESCE(l.tts_text, '') != ''"):
+        voice = narrator_voice_id if npc_id is None else own or npc_voices.get(npc_id) or default_voice_id
+        wanted[(line_id, voice)] = tts_hash(text, line_type)
     have = {(r[0], r[1]): r[2] for r in conn.execute("SELECT line_id, voice_id, tts_hash FROM jobs")}
     new = [(*k, h) for k, h in wanted.items() if k not in have]
     changed = [(h, _now(), *k) for k, h in wanted.items() if k in have and have[k] != h]
@@ -123,7 +127,9 @@ def _edit_tts_text(conn: sqlite3.Connection, action: sqlite3.Row) -> None:
                  f" transcript = NULL, updated_at = ? WHERE {idle}", (tts_hash(text), _now(), line_id))
 
 
-# Other dashboard actions (approve voice, fix lexicon, ...) land with their tickets; until then they stay unconsumed.
+# Approval actions (approve/reject a Candidate, regenerate an Archetype) belong to `vo prepare` and are left for it.
+# Other dashboard actions (fix lexicon, ...) land with their tickets; until then they stay unconsumed.
+PREPARE_ACTIONS = ("approve-candidate", "reject-candidate", "regenerate-archetype")
 ACTIONS: dict[str, Callable[[sqlite3.Connection, sqlite3.Row], None]] = {
     "retry-line": _retry_line,
     "skip-line": _skip_line,
@@ -171,7 +177,7 @@ def consume_actions(conn: sqlite3.Connection, log: Callable[[str], None] = print
     n = 0
     for action in conn.execute("SELECT * FROM review_actions WHERE consumed_at IS NULL ORDER BY id").fetchall():
         name, tag = action["action"], f"review action {action['id']} ({action['action']} {action['target']})"
-        if name in RUN_ACTIONS and control is None:
+        if (name in RUN_ACTIONS and control is None) or name in PREPARE_ACTIONS:
             continue
         if name not in ACTIONS and name not in RUN_ACTIONS:
             log(f"review action {action['id']}: {name!r} not supported yet, left queued")
@@ -304,7 +310,7 @@ def _end_run(conn: sqlite3.Connection, run_id: int, status: str, summary: dict |
 
 
 def run(conn: sqlite3.Connection, audio_dir: Path, *, voice_id: str = tts.DEFAULT_VOICE_ID,
-        narrator_voice_id: str = tts.NARRATOR_VOICE_ID,
+        narrator_voice_id: str = tts.NARRATOR_VOICE_ID, npc_voices: dict[int, str] | None = None,
         workers: int = DEFAULT_WORKERS, until: datetime | None = None, wer_threshold: float = DEFAULT_WER,
         asr_model: str = asr.DEFAULT_MODEL, max_attempts: int = MAX_ATTEMPTS, retry_quarantined: bool = True,
         processor: Callable[[Job], Result] = process_job, clock: Callable[[], datetime] = datetime.now,
@@ -316,7 +322,7 @@ def run(conn: sqlite3.Connection, audio_dir: Path, *, voice_id: str = tts.DEFAUL
     can pause, resume or move `until` mid-run. A paused run finishes in-flight lines, then idles until resumed."""
     with conn:  # a killed run leaves jobs 'running'
         conn.execute("UPDATE jobs SET status = 'pending' WHERE status = 'running'")
-    queued = sync_jobs(conn, voice_id, narrator_voice_id)
+    queued = sync_jobs(conn, voice_id, narrator_voice_id, npc_voices)
     if retry_quarantined:
         with conn:
             conn.execute("UPDATE jobs SET status = 'pending', attempts = 0 WHERE status = 'quarantined'")

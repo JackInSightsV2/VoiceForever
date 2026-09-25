@@ -11,7 +11,6 @@ const PAGES = {
   "/separation": "separation",
 };
 const SOON = {
-  approval: "Approve Archetypes, the Narrator and top Lexicon entries.",
   coverage: "Per-zone and per-Voice-Pack completion, drilling down to NPCs.",
   npcs: "Search NPCs; each with its voice, reference clip and every line.",
   "spot-check": "Keyboard-driven random line player with ratings.",
@@ -60,7 +59,8 @@ async function act(action, target, payload) {
     toast(`Failed: ${body.error || res.status}`);
     return false;
   }
-  toast(`Queued ${action} (#${body.id}), consumed by vo run`);
+  const by = action.endsWith("-candidate") || action === "regenerate-archetype" ? "vo prepare" : "vo run";
+  toast(`Queued ${action} (#${body.id}), applied by ${by}`);
   refresh();
   return true;
 }
@@ -293,6 +293,119 @@ function wireLine(el) {
   });
 }
 
+// --- Approval ---------------------------------------------------------------------------------------------------
+
+const openArch = new Set(); // expanded Archetype cards survive live re-renders
+let archFilter = "open";
+const pct = (n) => (n == null ? "–" : `${Math.round(n * 100)}%`);
+
+function renderApproval(d) {
+  const p = d.progress;
+  $("#nav-a").textContent = p.total - p.approved || "";
+  const shown = d.archetypes.filter((a) => archFilter === "all" || (archFilter === "open" ? !a.approved : a.approved));
+  const n = d.narrator;
+  main.innerHTML = `<h1>Approval <span class="muted">(${p.approved} / ${p.total} Archetypes approved)</span></h1>
+  <p class="muted">Pick each Archetype's Anchor by ear: the Candidate with the right character, which still holds up over
+  its sample lines (each is a continuation of that anchor, as <span class=mono>vo run</span> will speak every line).
+  Actions are queued; <span class=mono>vo prepare</span> applies them, re-renders regenerated Archetypes, and writes
+  <span class=mono>approved_voices.json</span> once all are approved.</p>
+  <section class="card">
+    <div class="bar" role="img" aria-label="Approved Archetypes">
+      <span class="s-done" style="flex:${p.approved}"></span><span class="s-pending" style="flex:${p.total - p.approved || (p.total ? 0 : 1)}"></span>
+    </div>
+    <div class="legend"><span><i class="sw s-done"></i>approved <b>${p.approved}</b></span>
+      <span><i class="sw s-pending"></i>open <b>${p.total - p.approved}</b></span>
+      ${p.queued_approvals ? `<span>approvals queued for <span class=mono>vo prepare</span> <b>${p.queued_approvals}</b></span>` : ""}
+      <span>${d.complete ? "All approved: <b>vo prepare</b> writes the lock, then <b>vo run</b> can start." : "<span class=mono>vo run</span> is locked until every Archetype is approved."}</span>
+    </div>
+  </section>
+  ${
+    n
+      ? `<section class="card arch narrator"><div class="ahead"><b>Narrator</b><span class="tag ok">fixed</span>
+         <span class="mono">${esc(n.voice_id)}</span><span class="muted">${fmt(n.lines)} lines with no NPC</span></div>
+         <div class="muted">${esc(n.description)}</div>
+         ${n.url ? `<div class="sample"><div class="slabel"><span class="stext">${esc(n.text)}</span></div><audio controls preload="none" src="${esc(n.url)}"></audio></div>` : ""}</section>`
+      : ""
+  }
+  <div class="filters">Show
+    ${["open", "approved", "all"].map((f) => `<button data-filter="${f}" class="${archFilter === f ? "on" : ""}">${f === "open" ? "Needs approval" : f[0].toUpperCase() + f.slice(1)}</button>`).join("")}
+  </div>
+  ${d.archetypes.length ? "" : `<div class="card empty">No Archetypes yet: run <span class=mono>vo prepare</span>.</div>`}
+  <div class="archs">${shown.map(archCard).join("")}</div>`;
+
+  main.querySelectorAll("[data-filter]").forEach((b) =>
+    b.addEventListener("click", () => {
+      archFilter = b.dataset.filter;
+      renderApproval(d);
+    }),
+  );
+  main.querySelectorAll("details.arch").forEach((el) =>
+    el.addEventListener("toggle", () => (el.open ? openArch.add(el.dataset.id) : openArch.delete(el.dataset.id))),
+  );
+  main.querySelectorAll("[data-a]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const { a, target } = b.dataset;
+      if (a === "approve") act("approve-candidate", target);
+      if (a === "reject") act("reject-candidate", target);
+      if (a === "regen") {
+        const note = main.querySelector(`textarea[data-note="${CSS.escape(target)}"]`).value.trim();
+        if (!note && !confirm(`Regenerate ${target} without a note?`)) return;
+        act("regenerate-archetype", target, { note });
+      }
+    }),
+  );
+}
+
+function archCard(a) {
+  const approved = a.approved ? a.candidates.find((c) => c.id === a.approved) : null;
+  const races = Object.entries(a.races).map(([r, k]) => `${esc(r)} (${k})`).join(", ");
+  const queued = a.queued.map((q) => `<span class="queued">queued: ${esc(q.action.replace("-candidate", "").replace("-archetype", ""))} ${esc(q.action === "regenerate-archetype" ? q.note || "" : q.target.split("/")[1])}</span>`).join("");
+  const status = a.approved
+    ? `<span class="tag ok">approved ${esc(a.approved.split("/")[1])}</span>`
+    : `<span class="tag">${a.candidates.filter((c) => c.status !== "rejected").length} candidates</span>`;
+  const notes = a.notes.length ? ` <span class="note">${a.notes.map(esc).join(". ")}.</span>` : "";
+  return `<details class="card arch" data-id="${esc(a.id)}" ${openArch.has(a.id) ? "open" : ""}>
+    <summary class="ahead"><b>${esc(a.label)}</b><span class="mono muted">${esc(a.id)}</span>${status}
+      ${a.kind === "family" ? `<span class="tag">Creature Family</span>` : ""}
+      <span class="muted">${fmt(a.npcs)} NPCs · ${fmt(a.lines)} lines</span>${queued}</summary>
+    <div class="muted small">${races}</div>
+    <p class="desc">${esc(a.base_description)}${notes}</p>
+    <div class="muted small">Anchor line: <i>${esc(a.anchor_text)}</i> · continuation <span class=mono>${esc(a.mode)}</span>
+      · generation ${a.generation}${a.superseded ? ` (${a.superseded} superseded)` : ""}${a.effect_chain ? ` · effect chain <span class=mono>${esc(a.effect_chain)}</span>` : ""}</div>
+    ${approved ? `<div class="muted small">Approved ${when(a.approved_at)}.</div>` : ""}
+    ${a.candidates.length ? `<div class="cands">${a.candidates.map((c) => candCard(a, c)).join("")}</div>` : `<div class="empty">No Candidates yet: run <span class=mono>vo prepare --archetype ${esc(a.id)}</span>.</div>`}
+    <div class="regen">
+      <textarea data-note="${esc(a.id)}" rows="2" placeholder="Note for a regenerate, e.g. deeper, less theatrical (appended to the description)"></textarea>
+      <button data-a="regen" data-target="${esc(a.id)}">Regenerate with note</button>
+    </div>
+  </details>`;
+}
+
+function candCard(a, c) {
+  const on = c.id === a.approved;
+  const qd = a.queued.filter((q) => q.target === c.id).map((q) => q.action);
+  const metric = (label, v, unit = "") => `<span title="${label}"><span class="muted">${label}</span> ${v == null ? "–" : esc(v) + unit}</span>`;
+  return `<div class="cand ${c.status}${on ? " picked" : ""}">
+    <div class="chead"><b class="mono">${esc(c.id.split("/")[1])}</b><span class="muted">seed ${c.seed}</span>
+      ${c.status !== "pending" ? `<span class="tag ${c.status === "approved" ? "ok" : ""}">${esc(c.status)}</span>` : ""}
+      ${qd.map((q) => `<span class="queued">queued: ${esc(q.replace("-candidate", ""))}</span>`).join("")}</div>
+    ${c.url ? `<audio controls preload="none" src="${esc(c.url)}"></audio>` : `<span class="muted">audio missing</span>`}
+    <div class="metrics">${metric("f0", c.f0, " Hz")}${metric("HNR", c.hnr, " dB")}${metric("centroid", c.centroid, " Hz")}
+      <span title="${esc(c.asr || "")}"><span class="muted">WER</span> <b class="${c.wer > 0.15 ? "bad" : ""}">${pct(c.wer)}</b></span></div>
+    ${c.samples
+      .map(
+        (s) => `<div class="sample"><div class="slabel"><span class="muted">#${s.idx}</span><span class="stext" title="${esc(s.text)}">${esc(s.text)}</span>
+        <span class="${s.wer > 0.15 ? "bad" : "muted"}" title="ASR: ${esc(s.asr || "")}">${pct(s.wer)}</span></div>
+        ${s.url ? `<audio controls preload="none" src="${esc(s.url)}"></audio>` : ""}</div>`,
+      )
+      .join("")}
+    <div class="qactions">
+      <button class="primary" data-a="approve" data-target="${esc(c.id)}" ${on ? "disabled" : ""}>${on ? "Approved" : "Approve"}</button>
+      <button class="danger" data-a="reject" data-target="${esc(c.id)}" ${c.status === "rejected" ? "disabled" : ""}>Reject</button>
+    </div>
+  </div>`;
+}
+
 // --- Coming pages -----------------------------------------------------------------------------------------------
 
 function renderSoon() {
@@ -302,18 +415,29 @@ function renderSoon() {
 
 // --- Live updates -----------------------------------------------------------------------------------------------
 
-const RENDER = { overview: renderOverview, quarantine: renderQuarantine };
+const RENDER = { overview: renderOverview, quarantine: renderQuarantine, approval: renderApproval };
 let pending = null;
+let lastSnapshot = null;
+
+// The Approval page is for listening: a live update waits while audio plays or a note is being typed.
+const approvalBusy = () =>
+  [...main.querySelectorAll("audio")].some((a) => !a.paused) ||
+  (document.activeElement?.tagName === "TEXTAREA" && document.activeElement.value.trim() !== "");
 
 function show(d) {
-
-  if (page === "quarantine" && editing.size) {
-    pending = d; // don't clobber an open editor
+  if ((page === "quarantine" && editing.size) || (page === "approval" && approvalBusy())) {
+    pending = d; // don't clobber an open editor or a playing clip
     return;
   }
   pending = null;
+  const snap = JSON.stringify(d);
+  if (page === "approval" && snap === lastSnapshot) return; // unchanged: keep the players as they are
+  lastSnapshot = snap;
   RENDER[page](d);
 }
+
+document.addEventListener("ended", () => pending && page === "approval" && show(pending), true);
+document.addEventListener("pause", () => pending && page === "approval" && show(pending), true);
 
 function connect() {
   const live = $("#live");
@@ -333,3 +457,4 @@ document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("on", a.dat
 if (RENDER[page]) connect();
 else renderSoon();
 if (page !== "quarantine") fetch("/api/quarantine").then((r) => r.json()).then((d) => ($("#nav-q").textContent = d.lines.length || ""));
+if (page !== "approval") fetch("/api/approval").then((r) => r.json()).then((d) => ($("#nav-a").textContent = d.progress.total - d.progress.approved || ""));

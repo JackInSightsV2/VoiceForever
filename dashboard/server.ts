@@ -5,7 +5,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 import { ActionError, insertAction } from "./src/actions";
-import { overview, quarantine } from "./src/queries";
+import { approval, overview, quarantine } from "./src/queries";
 
 const PUBLIC = join(import.meta.dir, "public");
 const PAGES = ["/", "/quarantine", "/approval", "/coverage", "/npcs", "/spot-check", "/separation"];
@@ -14,6 +14,7 @@ export const SSE_INTERVAL_MS = 5000;
 export interface Options {
   db: string;
   audio: string;
+  candidates?: string; // Approval Gate audio (vo prepare's build/candidates), served under /candidates/; default next to audio
   port?: number;
   host?: string;
   sseIntervalMs?: number;
@@ -31,7 +32,12 @@ export function openDatabases(path: string) {
 const snapshots: Record<string, (o: Options, db: Database) => unknown> = {
   overview: (_o, db) => overview(db),
   quarantine: (o, db) => quarantine(db, o.audio),
+  approval: (o, db) => approval(db, candidatesDir(o)),
 };
+
+function candidatesDir(o: Options) {
+  return o.candidates ?? join(resolve(o.audio), "..", "candidates");
+}
 
 function json(data: unknown, status = 200) {
   return Response.json(data, { status, headers: { "Cache-Control": "no-store" } });
@@ -119,6 +125,7 @@ export function createServer(opts: Options) {
         }
       }
       if (req.method === "GET" && path.startsWith("/audio/")) return serveAudio(opts.audio, path.slice(7));
+      if (req.method === "GET" && path.startsWith("/candidates/")) return serveAudio(candidatesDir(opts), path.slice(12));
       return json({ error: "not found" }, 404);
     },
     error(e) {
@@ -142,6 +149,7 @@ if (import.meta.main) {
     options: {
       db: { type: "string", default: join(repo, "build", "vo.sqlite") },
       audio: { type: "string", default: join(repo, "build", "audio") },
+      candidates: { type: "string", default: join(repo, "build", "candidates") },
       port: { type: "string", default: "8787" },
       host: { type: "string", default: "127.0.0.1" },
     },
@@ -149,6 +157,7 @@ if (import.meta.main) {
   const { server } = createServer({
     db: values.db!,
     audio: values.audio!,
+    candidates: values.candidates!,
     port: Number(values.port),
     host: values.host,
   });

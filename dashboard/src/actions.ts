@@ -1,10 +1,12 @@
 // Write side: the dashboard's only writes are review_actions rows, consumed by `vo run`. It never touches audio.
 import type { Database } from "bun:sqlite";
-import { runState } from "./queries";
+import { APPROVAL_ACTIONS, runState } from "./queries";
 
 export const LINE_ACTIONS = ["retry-line", "skip-line", "edit-tts-text"] as const;
 export const RUN_ACTIONS = ["pause-run", "resume-run", "set-until"] as const;
+export { APPROVAL_ACTIONS };
 export const MAX_TTS_TEXT = 4000;
+export const MAX_NOTE = 500;
 
 export class ActionError extends Error {
   constructor(
@@ -66,6 +68,25 @@ export function validate(read: Database, req: ActionRequest, now: Date = new Dat
       return { action, target, payload: JSON.stringify({ until }) };
     }
     return { action, target, payload: null };
+  }
+
+  // Approval Gate: consumed by `vo prepare` (approve/reject a Candidate; regenerate an Archetype with a note).
+  if (action === "approve-candidate" || action === "reject-candidate") {
+    const id = typeof req.target === "string" ? req.target : "";
+    const c = read.query("SELECT archetype, status FROM candidates WHERE id = ?").get(id) as Record<string, any> | null;
+    if (!c || c.archetype === "narrator") throw new ActionError(`no candidate ${JSON.stringify(req.target)}`, 404);
+    if (c.status === "superseded") throw new ActionError(`candidate ${id} was superseded by a regenerate`, 409);
+    return { action, target: id, payload: null };
+  }
+  if (action === "regenerate-archetype") {
+    const id = typeof req.target === "string" ? req.target : "";
+    const a = read.query("SELECT kind FROM archetypes WHERE id = ?").get(id) as Record<string, any> | null;
+    if (!a) throw new ActionError(`no archetype ${JSON.stringify(req.target)}`, 404);
+    if (a.kind === "narrator") throw new ActionError("the Narrator is fixed", 409);
+    const note = payload.note ?? "";
+    if (typeof note !== "string") throw new ActionError("note must be text");
+    if (note.trim().length > MAX_NOTE) throw new ActionError(`note is over ${MAX_NOTE} characters`);
+    return { action, target: id, payload: note.trim() ? JSON.stringify({ note: note.trim() }) : null };
   }
 
   throw new ActionError(`unknown action ${JSON.stringify(action)}`);
