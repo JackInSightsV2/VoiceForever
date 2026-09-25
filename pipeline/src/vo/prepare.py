@@ -1,11 +1,16 @@
 """`vo prepare`: the Approval Gate's render side.
 
-1. Apply the Approval page's review_actions (approve, reject, regenerate with a note).
-2. Sync the Archetype list from the NPCs (vo.archetypes) and the race style guide into `archetypes`.
+1. Apply the Approval page's review_actions (approve, reject, regenerate with a note; accept or correct a Lexicon
+   name).
+2. Sync the Archetype list from the NPCs (vo.archetypes) and the race style guide into `archetypes`, and the Lexicon's
+   names and drafts (vo.lexicon) into `lexicon`.
 3. For every Archetype without an approved anchor, render N Candidates (VoxCPM2 voice design of its anchor line,
    seeded, deterministic), measure them (pitch, HNR, spectral centroid, ASR WER), and render a few of the
    Archetype's real lines as continuation from each, so you hear whether a Candidate holds up over lines.
-4. Once every Archetype has an approved anchor, write the locked approved_voices.json (vo.lock).
+   For each top Lexicon name, render a sample sentence with its spelling: in the approved anchor of the speaking
+   NPC's Archetype (VoxCPM2) if there is one, else the Narrator (Kokoro).
+4. Once every Archetype has an approved anchor, write the locked approved_voices.json (vo.lock); once every top
+   Lexicon name is reviewed, the locked lexicon.json (vo.lexicon). The Approval Gate is complete with both.
 
 Idempotent and resumable: a clip already in the DB with its file on disk is not rendered again, and every clip is
 committed as it lands. Audio goes under build/candidates/<archetype>/.
@@ -22,7 +27,7 @@ from typing import Callable, Protocol
 
 import numpy as np
 
-from vo import archetypes, asr, audio, effects, lock, tts, voicefeat, voxcpm
+from vo import archetypes, asr, audio, effects, lexicon, lock, tts, voicefeat, voxcpm
 
 DEFAULT_CANDIDATES = 8
 DEFAULT_SAMPLES = 3
@@ -137,6 +142,7 @@ ACTIONS: dict[str, Callable[[sqlite3.Connection, sqlite3.Row], str]] = {
     "approve-candidate": _approve,
     "reject-candidate": _reject,
     "regenerate-archetype": _regenerate,
+    **lexicon.ACTIONS,  # accept-lexicon, correct-lexicon
 }
 
 
@@ -224,6 +230,11 @@ class Summary:
     candidates: int = 0
     samples: int = 0
     lock: str = ""
+    names: int = 0             # Lexicon names found in the lines
+    names_top: int = 0         # ... of which need review
+    names_reviewed: int = 0
+    name_samples: int = 0
+    lexicon_lock: str = ""
     log: list[str] = field(default_factory=list)
 
 
@@ -318,6 +329,57 @@ def _render_narrator(conn, out: Path, narrator: Renderer, log) -> int:
     return 1
 
 
+def _lexicon_voice(conn, npc: int | None, npc_map: dict[int, str]) -> sqlite3.Row | None:
+    """The approved anchor (candidate row + Archetype mode/effects) of the NPC's Archetype, if it has one on disk."""
+    aid = npc_map.get(npc) if npc is not None else None
+    if aid is None or aid == archetypes.NARRATOR:
+        return None
+    r = conn.execute("SELECT a.id AS archetype, a.mode, a.effect_chain, c.id, c.path, c.anchor_text FROM archetypes a"
+                     " JOIN candidates c ON c.id = a.approved WHERE a.id = ?", (aid,)).fetchone()
+    return r if r is not None and _exists(r["path"]) else None
+
+
+def _render_lexicon(conn, out: Path, get_engine: Callable[[], Engine], narrator: Renderer, log,
+                    top: int = lexicon.TOP) -> int:
+    """A sample per top Lexicon name, re-rendered when its spelling changes: the sentence of a line that says it,
+    with the name respelled, in the speaking NPC's approved Archetype anchor (VoxCPM2 continuation) if there is one,
+    else the Narrator (Kokoro)."""
+    npc_map, done = archetypes.npc_archetypes(conn), 0
+    rows = conn.execute("SELECT * FROM lexicon WHERE rank <= ? ORDER BY rank", (top,)).fetchall()
+    for r in rows:
+        if r["sample_spelling"] == r["spelling"] and _exists(r["sample_path"]):
+            continue
+        ids = lexicon.lines_saying(conn, [r["name"]])[:40]
+        lines = [conn.execute("SELECT id, npc_id, raw_text, player_gender FROM lines WHERE id = ?", (i,)).fetchone()
+                 for i in ids]
+        picks = [(lexicon.sample_sentence(l["raw_text"], l["player_gender"], r["name"]), l) for l in lines]
+        picks = [(s_, l) for s_, l in picks if lexicon.key(r["name"]) in lexicon.key(s_)]
+        if picks:
+            written, line = min(picks, key=lambda p: (abs(len(p[0]) - 90), p[1]["id"]))
+        else:
+            written, line = f"Have you heard of {r['name']}?", None
+        spoken = lexicon.Lexicon({r["name"]: r["spelling"]})(written)
+        voice = _lexicon_voice(conn, line["npc_id"] if line else None, npc_map)
+        if voice is not None:
+            samples, rate = get_engine().continue_(spoken, voice["path"], voice["anchor_text"], 0, voice["mode"] or "cont")
+            samples = audio.trim(effects.apply(voice["effect_chain"], samples, rate), rate)
+            label = f"VoxCPM2, {voice['archetype']} anchor {voice['id']}"
+        else:
+            samples, rate = narrator(spoken)
+            label = f"Narrator, {tts.NARRATOR_VOICE_ID}"
+        slug = "".join(c if c.isalnum() else "_" for c in r["name"])
+        wav = out / "lexicon" / f"{slug}.wav"
+        write_wav(wav, samples, rate)
+        with conn:
+            conn.execute("UPDATE lexicon SET sample_line = ?, sample_text = ?, sample_spoken = ?, sample_spelling = ?,"
+                         " sample_path = ?, sample_voice = ? WHERE name = ?",
+                         (line["id"] if line else None, written, spoken, r["spelling"], str(wav.resolve()), label,
+                          r["name"]))
+        log(f"lexicon sample {r['name']} -> {r['spelling']!r} ({label})")
+        done += 1
+    return done
+
+
 def _kokoro_narrator(text: str) -> tuple[np.ndarray, int]:
     name, voice = tts.split_voice_id(tts.NARRATOR_VOICE_ID)
     return tts.backend(name).render(text, voice, 0)
@@ -369,11 +431,15 @@ def prepare(conn: sqlite3.Connection, out: Path, *, engine: Engine | None = None
             asr_backend: asr.ASRBackend | None = None, asr_model: str = asr.DEFAULT_MODEL,
             narrator: Renderer | None = None, only: list[str] | None = None,
             candidates: int = DEFAULT_CANDIDATES, samples: int = DEFAULT_SAMPLES,
-            lock_path: Path | None = None, log: Callable[[str], None] = print) -> Summary:
-    """See the module docstring. `only` limits rendering (not action consumption or the lock) to those Archetypes."""
+            lock_path: Path | None = None, lexicon_path: Path | None = None, areas: list[str] | tuple = (),
+            log: Callable[[str], None] = print) -> Summary:
+    """See the module docstring. `only` limits rendering (not action consumption or the locks) to those Archetypes,
+    and skips the Lexicon samples. `areas` are zone/area names (the world DB's), to flag Lexicon names as zones."""
     s = Summary()
     s.actions = consume_actions(conn, log)
     ids = sync_archetypes(conn)
+    found = lexicon.sync(conn, areas)
+    s.names, s.names_top = found["names"], found["top"]
     s.archetypes = len(ids)
     if only:
         unknown = sorted(set(only) - set(ids))
@@ -382,6 +448,8 @@ def prepare(conn: sqlite3.Connection, out: Path, *, engine: Engine | None = None
     engine = engine or voxcpm.engine()
     check = _Check(asr_backend, asr_model)
     s.candidates += _render_narrator(conn, out, narrator or _kokoro_narrator, log)
+    if not only:
+        s.name_samples = _render_lexicon(conn, out, lambda: engine, narrator or _kokoro_narrator, log)
     npc_map = archetypes.npc_archetypes(conn)
     for aid in ids:
         a = conn.execute("SELECT * FROM archetypes WHERE id = ?", (aid,)).fetchone()
@@ -405,11 +473,18 @@ def prepare(conn: sqlite3.Connection, out: Path, *, engine: Engine | None = None
     s.approved = conn.execute(f"SELECT COUNT(*) FROM archetypes WHERE approved IS NOT NULL AND id IN"
                               f" ({','.join('?' * len(ids))})", ids).fetchone()[0] if ids else 0
     s.lock = update_lock(conn, ids, lock_path or lock.path(), log)
+    s.names_reviewed = lexicon.progress(conn)[0]
+    s.lexicon_lock = lexicon.update_lock(conn, lexicon_path or lexicon.path(), log)
     return s
 
 
 def summary_text(s: Summary) -> str:
     lock_note = {"open": "lock not written until every Archetype is approved", "written": "lock written",
                  "unchanged": "lock unchanged"}[s.lock]
+    lex_note = {"open": "lexicon.json not written until every top name is reviewed", "written": "lexicon.json written",
+                "unchanged": "lexicon.json unchanged"}[s.lexicon_lock]
+    gate = "Approval Gate complete" if s.lock != "open" and s.lexicon_lock != "open" else "Approval Gate open"
     return (f"{s.approved}/{s.archetypes} Archetypes approved; rendered {s.candidates} candidates and {s.samples}"
-            f" samples; applied {s.actions} review actions; {lock_note}.")
+            f" samples; applied {s.actions} review actions; {lock_note}. Lexicon: {s.names} names,"
+            f" {s.names_reviewed}/{s.names_top} top names reviewed, {s.name_samples} samples rendered; {lex_note}."
+            f" {gate}.")

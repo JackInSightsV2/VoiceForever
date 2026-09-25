@@ -154,7 +154,9 @@ def test_prepare_renders_and_is_idempotent(small, tmp_path):
     eng = FakeEngine()
     s, narrated = _prepare(small, tmp_path, eng)
     assert (s.archetypes, s.approved, s.lock) == (2, 0, "open")
-    assert narrated == ["Wanted: the bandit leader Hogger, for crimes against Elwynn Forest."]
+    # The Narrator's sample, then the Lexicon's one top name (Elwynn, in a Narrator line: no NPC Archetype).
+    assert narrated == ["Wanted: the bandit leader Hogger, for crimes against Elwynn Forest."] * 2
+    assert s.names == 1 and s.name_samples == 1
     # 2 Candidates per Archetype, seeded 0 and 1, reading the Archetype's anchor line with its description.
     assert sorted((d[2], d[1] == archetypes.STYLE["orc_f"].description) for d in eng.design_calls) == [
         (0, False), (0, True), (1, False), (1, True)]

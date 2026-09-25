@@ -84,6 +84,18 @@ CREATE TABLE IF NOT EXISTS candidate_samples (
   candidate TEXT, idx INTEGER, line_id INTEGER, text TEXT, path TEXT, duration_s REAL, asr TEXT, wer REAL,
   PRIMARY KEY (candidate, idx)
 );
+-- The Lexicon (#12, vo.lexicon): one row per lore name found in the lines. spelling is the one in use (the draft,
+-- the reviewed spelling, or for an auto name its alt-th alternative). status: pending (a top name awaiting review) |
+-- accepted | corrected | auto. rank is by lines (NULL once a reviewed name leaves the lines). The sample_* columns
+-- are the Approval page's rendered sample of a top name.
+CREATE TABLE IF NOT EXISTS lexicon (
+  name TEXT PRIMARY KEY, lines INTEGER, rank INTEGER, npc INTEGER, zone INTEGER, example_line INTEGER,
+  draft TEXT, spelling TEXT, status TEXT NOT NULL DEFAULT 'auto', alt INTEGER NOT NULL DEFAULT 0,
+  sample_line INTEGER, sample_text TEXT, sample_spoken TEXT, sample_spelling TEXT, sample_path TEXT,
+  sample_voice TEXT, reviewed_at TEXT, updated_at TEXT
+);
+-- Lines where ASR missed a Lexicon name since its spelling last changed (vo run).
+CREATE TABLE IF NOT EXISTS lexicon_misses (name TEXT, line_id INTEGER, at TEXT, PRIMARY KEY (name, line_id));
 -- A line's previous text, kept when Capture (Drift) replaces it.
 CREATE TABLE IF NOT EXISTS line_history (
   line_id INTEGER, raw_text TEXT, tts_text TEXT, text_hash TEXT, reason TEXT, capture_id INTEGER,

@@ -49,6 +49,7 @@ class Job:
     wer_threshold: float = DEFAULT_WER
     asr_model: str = asr.DEFAULT_MODEL
     line_type: str | None = None  # picks the per-type Delivery (tts.DELIVERY)
+    names: tuple[tuple[str, str], ...] = ()  # Lexicon names in the text: (spelling, written), for the ASR check
 
 
 @dataclass(frozen=True)
@@ -127,9 +128,9 @@ def _edit_tts_text(conn: sqlite3.Connection, action: sqlite3.Row) -> None:
                  f" transcript = NULL, updated_at = ? WHERE {idle}", (tts_hash(text), _now(), line_id))
 
 
-# Approval actions (approve/reject a Candidate, regenerate an Archetype) belong to `vo prepare` and are left for it.
-# Other dashboard actions (fix lexicon, ...) land with their tickets; until then they stay unconsumed.
-PREPARE_ACTIONS = ("approve-candidate", "reject-candidate", "regenerate-archetype")
+# Approval actions (approve/reject a Candidate, regenerate an Archetype, accept/correct a Lexicon name) belong to
+# `vo prepare` and are left for it.
+PREPARE_ACTIONS = ("approve-candidate", "reject-candidate", "regenerate-archetype", "accept-lexicon", "correct-lexicon")
 ACTIONS: dict[str, Callable[[sqlite3.Connection, sqlite3.Row], None]] = {
     "retry-line": _retry_line,
     "skip-line": _skip_line,
@@ -197,8 +198,23 @@ def consume_actions(conn: sqlite3.Connection, log: Callable[[str], None] = print
     return n
 
 
-def claim(conn: sqlite3.Connection, audio_dir: Path, **job_opts) -> Job | None:
-    """Mark the next pending job running and return it; each take gets a new seed (its lifetime try number)."""
+def requeue_lines(conn: sqlite3.Connection, line_ids: list[int]) -> None:
+    """Requeue the idle jobs of lines whose tts_text changed (a job mid-render is requeued by the next run's sync)."""
+    with conn:
+        for line_id in line_ids:
+            text = conn.execute("SELECT tts_text FROM lines WHERE id = ?", (line_id,)).fetchone()[0]
+            for voice, line_type in conn.execute(
+                    "SELECT j.voice_id, l.type FROM jobs j JOIN lines l ON l.id = j.line_id"
+                    " WHERE j.line_id = ? AND j.status != 'running'", (line_id,)).fetchall():
+                conn.execute("UPDATE audio SET status = 'stale' WHERE line_id = ? AND voice_id = ?", (line_id, voice))
+                conn.execute("UPDATE jobs SET tts_hash = ?, status = 'pending', attempts = 0, reason = NULL, wer = NULL,"
+                             " transcript = NULL, updated_at = ? WHERE line_id = ? AND voice_id = ?",
+                             (tts_hash(text, line_type), _now(), line_id, voice))
+
+
+def claim(conn: sqlite3.Connection, audio_dir: Path, lex=None, **job_opts) -> Job | None:
+    """Mark the next pending job running and return it; each take gets a new seed (its lifetime try number).
+    With a Lexicon, the job carries the names in its text for the ASR check."""
     row = conn.execute(
         "SELECT j.line_id, j.voice_id, j.tries, l.npc_id, l.type, l.tts_text FROM jobs j JOIN lines l ON l.id = j.line_id"
         " WHERE j.status = 'pending' ORDER BY j.attempts, j.line_id LIMIT 1").fetchone()
@@ -208,8 +224,9 @@ def claim(conn: sqlite3.Connection, audio_dir: Path, **job_opts) -> Job | None:
         conn.execute("UPDATE jobs SET status = 'running', tries = tries + 1, updated_at = ?"
                      " WHERE line_id = ? AND voice_id = ?", (_now(), row["line_id"], row["voice_id"]))
     out = audio_dir / str(row["npc_id"] or "narrator") / f"{row['line_id']}.ogg"
+    names = tuple(lex.pairs(row["tts_text"])) if lex is not None else ()
     return Job(row["line_id"], row["voice_id"], row["tts_text"], row["tries"], str(out.resolve()),
-               line_type=row["type"], **job_opts)
+               line_type=row["type"], names=names, **job_opts)
 
 
 def record(conn: sqlite3.Connection, job: Job, result: Result, max_attempts: int = MAX_ATTEMPTS) -> str:
@@ -246,7 +263,7 @@ def process_job(job: Job, tts_backend: tts.TTSBackend | None = None, asr_backend
             wav = Path(tmp) / "line.wav"
             duration = audio.postprocess(samples, rate, wav)
             transcript = (asr_backend or asr.whisper(job.asr_model)).transcribe(wav).strip()
-            score = asr.wer(job.text, transcript)
+            score = asr.wer(job.text, transcript, job.names)  # a Lexicon respelling isn't an error
             if score > job.wer_threshold:
                 return Result(False, f"ASR WER {score:.2f} > {job.wer_threshold}", score, transcript, duration)
             out = Path(job.out)
@@ -313,13 +330,16 @@ def run(conn: sqlite3.Connection, audio_dir: Path, *, voice_id: str = tts.DEFAUL
         narrator_voice_id: str = tts.NARRATOR_VOICE_ID, npc_voices: dict[int, str] | None = None,
         workers: int = DEFAULT_WORKERS, until: datetime | None = None, wer_threshold: float = DEFAULT_WER,
         asr_model: str = asr.DEFAULT_MODEL, max_attempts: int = MAX_ATTEMPTS, retry_quarantined: bool = True,
-        processor: Callable[[Job], Result] = process_job, clock: Callable[[], datetime] = datetime.now,
+        processor: Callable[[Job], Result] = process_job, clock: Callable[[], datetime] = datetime.now, lexicon=None,
         log: Callable[[str], None] = print, poll_s: float = POLL_S,
         sleep: Callable[[float], None] = time_mod.sleep) -> dict:
     """Work the queue until it is empty or `until` passes; returns a summary. Safe to kill and rerun at any point.
 
     Every loop (at least every `poll_s`) it heartbeats its `runs` row and consumes review_actions, so the dashboard
-    can pause, resume or move `until` mid-run. A paused run finishes in-flight lines, then idles until resumed."""
+    can pause, resume or move `until` mid-run. A paused run finishes in-flight lines, then idles until resumed.
+
+    With a `lexicon` (vo.lexicon.Lexicon, already applied to tts_text), each take's ASR transcript is checked for its
+    names; an auto name ASR keeps missing is respelled and the lines that say it are requeued."""
     with conn:  # a killed run leaves jobs 'running'
         conn.execute("UPDATE jobs SET status = 'pending' WHERE status = 'running'")
     queued = sync_jobs(conn, voice_id, narrator_voice_id, npc_voices)
@@ -344,7 +364,7 @@ def run(conn: sqlite3.Connection, audio_dir: Path, *, voice_id: str = tts.DEFAUL
                     stopping = True
                     log(f"--until {control.until:%H:%M} reached: finishing in-flight lines, taking no new ones")
                     break
-                job = claim(conn, audio_dir, wer_threshold=wer_threshold, asr_model=asr_model)
+                job = claim(conn, audio_dir, lexicon, wer_threshold=wer_threshold, asr_model=asr_model)
                 if job is None:
                     break
                 in_flight[executor.submit(processor, job)] = job
@@ -369,6 +389,10 @@ def run(conn: sqlite3.Connection, audio_dir: Path, *, voice_id: str = tts.DEFAUL
                     result = Result(False, f"error: {type(e).__name__}: {e}")
                 status = record(conn, job, result, max_attempts)
                 this_run[status] += 1
+                if lexicon is not None and job.names:
+                    from vo import lexicon as lexicon_mod
+                    requeue_lines(conn, lexicon_mod.after_take(conn, lexicon, job.line_id, job.text, job.names,
+                                                               result.transcript, log))
                 left = conn.execute("SELECT COUNT(*) FROM jobs WHERE status IN ('pending', 'running')").fetchone()[0]
                 detail = f"wer={result.wer:.2f}" if result.wer is not None else ""
                 log(f"line {job.line_id} [{job.voice_id}] {status} {detail} {result.reason or ''}".rstrip()

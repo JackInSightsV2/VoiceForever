@@ -29,7 +29,9 @@ def main(argv: list[str] | None = None) -> None:
     g.add_argument("--quest", type=int, action="append", help="one quest's detail text only")
     g.add_argument("--all", action="store_true", help="all Core Content: NPCs, spawns, Quest Text, Gossip")
     sub.add_parser("stats", help="summarise NPCs, lines and words in the pipeline DB")
-    sub.add_parser("prep", help="recompute every line's tts_text from its raw text")
+    sub.add_parser("prep", help="recompute every line's tts_text from its raw text (Lexicon applied)")
+    p = sub.add_parser("lexicon", help="list the Lexicon's lore names by line count, with drafts (extracts afresh)")
+    p.add_argument("--top", type=int, default=30, help="how many to list (default 30)")
     p = sub.add_parser("prepare", help="Approval Gate: render anchor Candidates per Archetype, apply approvals,"
                                        " write approved_voices.json once all are approved")
     p.add_argument("--archetype", action="append", help="only render this Archetype (repeatable), e.g. orc_f")
@@ -105,10 +107,21 @@ def main(argv: list[str] | None = None) -> None:
         from vo import stats
         print(stats.summary(db.connect(args.db)))
     elif args.command == "prep":
-        from vo import prep
-        print(f"tts_text updated for {prep.prepare_lines(db.connect(args.db))} lines")
+        from vo import lexicon, prep
+        conn = db.connect(args.db)
+        locked = lexicon.load(lexicon.path()) if lexicon.path().exists() else None
+        print(f"tts_text updated for {prep.prepare_lines(conn, lexicon.from_db(conn, locked))} lines")
+    elif args.command == "lexicon":
+        from vo import lexicon
+        conn = db.connect(args.db)
+        names = lexicon.extract(conn, _areas(args.world))
+        print(f"{len(names)} names; the top {lexicon.TOP} go to the Approval page")
+        print(f"{'#':>4} {'lines':>6}  {'name':<22} {'draft':<26} flags")
+        for i, n in enumerate(names[:args.top], 1):
+            flags = " ".join(f for f, on in (("npc", n.npc), ("zone", n.zone)) if on)
+            print(f"{i:>4} {n.lines:>6}  {n.name:<22} {lexicon.draft(n.name):<26} {flags}")
     elif args.command == "prepare":
-        from vo import archetypes, asr, lock, prepare
+        from vo import archetypes, asr, lexicon, lock, prepare
         conn = db.connect(args.db)
         if args.list:
             for a in archetypes.derive(conn):
@@ -118,18 +131,23 @@ def main(argv: list[str] | None = None) -> None:
         try:
             summary = prepare.prepare(conn, BUILD / "candidates", only=args.archetype, candidates=args.candidates,
                                       samples=args.samples, asr_model=args.asr_model or asr.DEFAULT_MODEL,
-                                      lock_path=lock.path())
+                                      lock_path=lock.path(), lexicon_path=lexicon.path(), areas=_areas(args.world))
         except (archetypes.UnmappedRace, ValueError) as e:
             sys.exit(f"vo prepare: {e}")
         print(prepare.summary_text(summary))
     elif args.command in ("run", "generate"):
-        from vo import archetypes, asr, lock, run, tts
+        from vo import archetypes, asr, lexicon, lock, prep, run, tts
         conn = db.connect(args.db)
-        try:
+        try:  # the Approval Gate: both locks
             approved = lock.require(conn, lock.path())
+            names = lexicon.require(conn, lexicon.path())
         except (lock.LockError, archetypes.UnmappedRace) as e:
             sys.exit(f"vo run refuses to start: {e}")
         os.environ[lock.ENV] = str(lock.path())  # spawned workers load the same lock
+        lex = lexicon.from_db(conn, names)
+        respelled = prep.prepare_lines(conn, lex)  # a Lexicon change requeues its lines (tts_hash)
+        if respelled:
+            print(f"Lexicon: tts_text updated for {respelled} lines")
         voice = args.voice or tts.DEFAULT_VOICE
         narrator = args.narrator_voice or approved.get("narrator", {}).get("voice_id") or tts.NARRATOR_VOICE_ID
         opts = dict(
@@ -137,7 +155,7 @@ def main(argv: list[str] | None = None) -> None:
             narrator_voice_id=narrator if ":" in narrator else f"kokoro:{narrator}", workers=args.workers,
             until=run.parse_until(args.until, datetime.now()) if args.until else None,
             wer_threshold=args.wer_threshold, asr_model=args.asr_model or asr.DEFAULT_MODEL,
-            retry_quarantined=not args.no_retry_quarantined)
+            retry_quarantined=not args.no_retry_quarantined, lexicon=lex)
         signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))  # unwind: stop workers, release caffeinate
         with run.caffeinate(not args.no_caffeinate):
             summary = run.run_notified(args.ntfy, lambda: run.run(conn, BUILD / "audio", **opts))
@@ -219,6 +237,17 @@ def main(argv: list[str] | None = None) -> None:
             parser.error(f"unknown model(s) {sorted(unknown)}; choose from {list(catalog.MODEL_IDS)}")
         run.bakeoff(args.out or Path("build/bakeoff"), models, limit=args.limit, force=args.force,
                     asr=not args.no_asr, page_only=args.page_only)
+
+
+def _areas(world: Path) -> list[str]:
+    """Zone and area names from the world DB (area_template), if it is there."""
+    if not world.exists():
+        return []
+    from vo import source
+    try:
+        return [r[0] for r in source.open_world(world).execute("SELECT name FROM area_template WHERE name IS NOT NULL")]
+    except Exception:
+        return []
 
 
 if __name__ == "__main__":
