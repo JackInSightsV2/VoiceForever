@@ -14,7 +14,7 @@ The offline data behind Core Content: the VMaNGOS world database (quest text, go
 ## Voices
 
 **Archetype**:
-A human-approved template voice for one race and gender. A race and gender may have several.
+A human-approved template voice for one race and gender, or one Creature Family, fixed by its Anchor. A race and gender may have several.
 _Avoid_: base voice, base archetype
 
 **Approval Gate**:
@@ -22,6 +22,13 @@ The only human step before an unattended run: approving Archetypes and the Lexic
 
 **Lexicon**:
 Phonetic spellings for lore names (e.g. Kel'Thuzad), used in spoken audio. The most frequent names are human-approved; the rest are drafted and ASR-checked automatically.
+
+**Anchor**:
+The short clip that fixes a voice's identity. Every line of that voice is generated as a continuation of its anchor. An Archetype's anchor is picked by ear; an NPC's anchor is designed and selected automatically.
+_Avoid_: reference clip, ref
+
+**Creature Family**:
+A group of non-humanoid creature types that share one Archetype (e.g. Great Beasts: dragons, demons, giants).
 
 **Candidate**:
 An Archetype awaiting human approval.
