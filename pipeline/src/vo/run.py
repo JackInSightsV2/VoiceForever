@@ -21,7 +21,7 @@ from datetime import datetime, time, timedelta
 from pathlib import Path
 from typing import Callable
 
-from vo import asr, audio, tts
+from vo import asr, audio, ratings, tts
 
 MAX_ATTEMPTS = 3
 DEFAULT_WORKERS = 3
@@ -175,8 +175,9 @@ RUN_ACTIONS: dict[str, Callable[[Control, sqlite3.Row], str]] = {
 
 def consume_actions(conn: sqlite3.Connection, log: Callable[[str], None] = print, control: Control | None = None) -> int:
     """Apply unconsumed review_actions in order; returns how many were consumed. An invalid action is logged and
-    dropped. Run actions need a live run (`control`) and are dropped if they target another run."""
-    n = 0
+    dropped. Run actions need a live run (`control`) and are dropped if they target another run. Spot-check ratings
+    are folded into `ratings` first (vo.ratings), which may queue NPC Voice re-rolls for vo voices."""
+    n = ratings.fold(conn, log)
     for action in conn.execute("SELECT * FROM review_actions WHERE consumed_at IS NULL ORDER BY id").fetchall():
         name, tag = action["action"], f"review action {action['id']} ({action['action']} {action['target']})"
         if (name in RUN_ACTIONS and control is None) or name in PREPARE_ACTIONS or name in VOICES_ACTIONS:
@@ -333,14 +334,17 @@ def run(conn: sqlite3.Connection, audio_dir: Path, *, voice_id: str = tts.DEFAUL
         asr_model: str = asr.DEFAULT_MODEL, max_attempts: int = MAX_ATTEMPTS, retry_quarantined: bool = True,
         processor: Callable[[Job], Result] = process_job, clock: Callable[[], datetime] = datetime.now, lexicon=None,
         log: Callable[[str], None] = print, poll_s: float = POLL_S,
-        sleep: Callable[[float], None] = time_mod.sleep) -> dict:
+        sleep: Callable[[float], None] = time_mod.sleep, report_dir: Path | None = None) -> dict:
     """Work the queue until it is empty or `until` passes; returns a summary. Safe to kill and rerun at any point.
 
     Every loop (at least every `poll_s`) it heartbeats its `runs` row and consumes review_actions, so the dashboard
     can pause, resume or move `until` mid-run. A paused run finishes in-flight lines, then idles until resumed.
 
     With a `lexicon` (vo.lexicon.Lexicon, already applied to tts_text), each take's ASR transcript is checked for its
-    names; an auto name ASR keeps missing is respelled and the lines that say it are requeued."""
+    names; an auto name ASR keeps missing is respelled and the lines that say it are requeued.
+
+    With a `report_dir`, however the run ends, the morning report (vo.report) is written there: <run id>.html and
+    latest.html. A report that fails is logged, never raised."""
     with conn:  # a killed run leaves jobs 'running'
         conn.execute("UPDATE jobs SET status = 'pending' WHERE status = 'running'")
     queued = sync_jobs(conn, voice_id, narrator_voice_id, npc_voices)
@@ -418,6 +422,12 @@ def run(conn: sqlite3.Connection, audio_dir: Path, *, voice_id: str = tts.DEFAUL
         with conn:
             conn.execute("UPDATE jobs SET status = 'pending' WHERE status = 'running'")
         _end_run(conn, control.run_id, end_status, summary, error)
+        if report_dir is not None:
+            try:
+                from vo import report
+                log(f"morning report: {report.generate(conn, control.run_id, report_dir)}")
+            except Exception as e:
+                log(f"morning report failed: {type(e).__name__}: {e}")
 
 
 def summary_text(summary: dict) -> str:

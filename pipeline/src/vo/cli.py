@@ -79,12 +79,15 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--pack", default=None, help="build only this pack, e.g. VoiceForever_Alliance_1-10")
     p = sub.add_parser("install", help="symlink the Core Addon and built packs into an AddOns dir")
     p.add_argument("addons_dir", type=Path)
+    p = sub.add_parser("report", help="(re)write the morning report of a run into build/reports (vo run writes it)")
+    p.add_argument("--run", type=int, help="run id (default: the latest run)")
     p = sub.add_parser("dashboard", help="serve the review dashboard (Bun) on localhost")
     p.add_argument("--port", type=int, default=8787)
     p.add_argument("--host", default="127.0.0.1", help="bind address (e.g. a Tailscale IP to check from a phone)")
     p.add_argument("--audio", type=Path, default=BUILD / "audio", help="audio dir to serve for playback")
     p.add_argument("--candidates", type=Path, default=BUILD / "candidates", help="Approval Gate audio (vo prepare)")
     p.add_argument("--voices", type=Path, default=BUILD / "voices", help="NPC anchors (vo voices)")
+    p.add_argument("--reports", type=Path, default=BUILD / "reports", help="morning reports (vo run)")
     bo = sub.add_parser("bakeoff", help="render the model bake-off and its listening page (needs --group bakeoff)")
     bo.add_argument("--round", type=int, choices=(1, 2, 3, 4, 5), default=1,
                     help="1: model comparison; 2: fantasy race voices (designers, cloners, DSP, VC); "
@@ -120,6 +123,7 @@ def main(argv: list[str] | None = None) -> None:
             from vo import extract
             questie, displays = source.load_questie(DATA), source.load_displays(DATA, world)
             print(extract.extract_all(conn, world, questie, displays))
+            _refresh_coverage(conn, args.world)
         else:
             for q in args.quest:
                 print(f"quest {q}: lines {quests.extract_detail(conn, world, q)}")
@@ -207,7 +211,8 @@ def main(argv: list[str] | None = None) -> None:
             narrator_voice_id=narrator if ":" in narrator else f"kokoro:{narrator}", workers=args.workers,
             until=run.parse_until(args.until, datetime.now()) if args.until else None,
             wer_threshold=args.wer_threshold, asr_model=args.asr_model or asr.DEFAULT_MODEL,
-            retry_quarantined=not args.no_retry_quarantined, lexicon=lex)
+            retry_quarantined=not args.no_retry_quarantined, lexicon=lex, report_dir=BUILD / "reports")
+        _refresh_coverage(conn, args.world)  # the zones and Voice Packs the dashboard and morning report show
         signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))  # unwind: stop workers, release caffeinate
         with run.caffeinate(not args.no_caffeinate):
             summary = run.run_notified(args.ntfy, lambda: run.run(conn, BUILD / "audio", **opts))
@@ -237,6 +242,9 @@ def main(argv: list[str] | None = None) -> None:
                   file=sys.stderr)
             src = None
         built = package.package(conn, BUILD / "packs", src, args.pack)
+        if src is not None:
+            from vo import coverage
+            coverage.refresh(conn, source.open_world(args.world), src)
         print(f"{'pack':<30} {'lines':>7} {'voiced':>7} {'MB':>8}")
         for pack, n in package.report(conn, src).items():
             if not args.pack or pack == args.pack:
@@ -245,6 +253,13 @@ def main(argv: list[str] | None = None) -> None:
         from vo import install
         for link in install.install(args.addons_dir, CORE_ADDON, BUILD / "packs"):
             print(f"{link} -> {link.resolve()}")
+    elif args.command == "report":
+        from vo import report
+        conn = db.connect(args.db)
+        run_id = args.run or (conn.execute("SELECT MAX(id) FROM runs").fetchone()[0])
+        if run_id is None:
+            sys.exit("vo report: no runs yet")
+        print(report.generate(conn, run_id, BUILD / "reports"))
     elif args.command == "dashboard":
         import shutil
         bun = shutil.which("bun")
@@ -253,6 +268,7 @@ def main(argv: list[str] | None = None) -> None:
         db.connect(args.db).close()  # create it and its tables (WAL) so the dashboard can open it read-only
         os.execv(bun, [bun, str(DASHBOARD / "server.ts"), "--db", str(args.db), "--audio", str(args.audio),
                        "--candidates", str(args.candidates), "--voices", str(args.voices),
+                       "--reports", str(args.reports),
                        "--port", str(args.port), "--host", args.host])
     elif args.command == "bakeoff" and args.round == 5:
         from vo.bakeoff import run5
@@ -289,6 +305,15 @@ def main(argv: list[str] | None = None) -> None:
             parser.error(f"unknown model(s) {sorted(unknown)}; choose from {list(catalog.MODEL_IDS)}")
         run.bakeoff(args.out or Path("build/bakeoff"), models, limit=args.limit, force=args.force,
                     asr=not args.no_asr, page_only=args.page_only)
+
+
+def _refresh_coverage(conn, world: Path) -> None:
+    """Store each line's zone and Voice Pack, and the zone names (vo.coverage), if the world DB is there."""
+    if not world.exists():
+        print(f"warning: no world DB at {world}; zones and Voice Packs not refreshed", file=sys.stderr)
+        return
+    from vo import coverage, source
+    print(f"coverage: zone and Voice Pack stored for {coverage.refresh(conn, source.open_world(world))} lines")
 
 
 def _areas(world: Path) -> list[str]:

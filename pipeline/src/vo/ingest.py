@@ -253,7 +253,8 @@ def _miss(conn: sqlite3.Connection, r: dict, capture_id: int, counts: Counter) -
 
 
 CAPTURE_COLS = ("upload_id", "record_key", "kind", "npc_id", "guid_type", "npc_name", "unit_sex", "creature_type",
-                "zone", "x", "y", "event", "quest_id", "text", "text_hash", "expected_hash", "locale", "seen_at")
+                "zone", "x", "y", "event", "quest_id", "text", "text_hash", "expected_hash", "locale", "seen_at",
+                "ingested_at")
 
 
 def ingest_file(conn: sqlite3.Connection, path: Path) -> tuple[str, Counter]:
@@ -266,6 +267,7 @@ def ingest_file(conn: sqlite3.Connection, path: Path) -> tuple[str, Counter]:
     upload_id = hashlib.sha256(data).hexdigest()[:16]
     records = read_records(data)
     counts = Counter(read=len(records))
+    ingested_at = datetime.now().isoformat(timespec="seconds")
     with conn:
         for raw in records:
             r = record(raw)
@@ -273,7 +275,7 @@ def ingest_file(conn: sqlite3.Connection, path: Path) -> tuple[str, Counter]:
                 counts["invalid"] += 1
                 continue
             values = dict(r, upload_id=upload_id, record_key=record_key(r), text_hash=r["hash"],
-                          expected_hash=r["expected"])
+                          expected_hash=r["expected"], ingested_at=ingested_at)
             row = conn.execute(
                 f"INSERT INTO capture ({', '.join(CAPTURE_COLS)}) VALUES ({', '.join('?' * len(CAPTURE_COLS))})"
                 " ON CONFLICT (record_key) DO NOTHING RETURNING id", [values[c] for c in CAPTURE_COLS]).fetchone()

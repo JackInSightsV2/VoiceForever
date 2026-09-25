@@ -31,7 +31,8 @@ from their name and subname (King: regal; Warchief: commanding; ...).
 
 Deterministic: an NPC's traits and seeds come from (NPC id, roll, attempt, candidate), so the same NPC gets the same
 voice given the same Neighbour voices. NPCs are built in id order. A dashboard re-roll (review action
-`reroll-voice`, from the Separation page) bumps the NPC's roll and rebuilds it. A voice whose Archetype anchor has
+`reroll-voice`, from the Separation page or the NPC browser, or auto-queued by repeated spot-check thumbs-down:
+vo.ratings) bumps the NPC's roll and rebuilds it. A voice whose Archetype anchor has
 changed since it was built is rebuilt too.
 
 Thresholds are in Config. The floor is provisional (set so that most dsp NPCs clear it: 14 of 20 on a first real
@@ -55,7 +56,7 @@ from typing import Callable, Protocol
 
 import numpy as np
 
-from vo import archetypes, lock, speaker
+from vo import archetypes, lock, ratings, speaker
 
 VOICE_ENV = "VO_VOICES_DIR"  # lets `vo run`'s spawned workers find the NPC anchors
 PIN_FIELD = "voice_prompt"
@@ -634,6 +635,7 @@ def build(conn: sqlite3.Connection, lock_data: dict, out_dir: Path, *, cfg: Conf
         raise ValueError(f"unknown strategy {cfg.strategy!r}; one of {STRATEGIES}")
     tools = tools or Tools()
     s = Summary()
+    ratings.fold(conn, log)  # spot-check thumbs-down may queue re-rolls
     s.rerolls = consume_rerolls(conn, log)
     s.stale = drop_stale(conn, lock_data)
     npcs = load_npcs(conn)

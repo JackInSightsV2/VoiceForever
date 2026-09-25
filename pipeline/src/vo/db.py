@@ -116,6 +116,20 @@ CREATE TABLE IF NOT EXISTS line_history (
   line_id INTEGER, raw_text TEXT, tts_text TEXT, text_hash TEXT, reason TEXT, capture_id INTEGER,
   changed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+-- Zone names by AreaTable id (as spawns.zone), from the world DB's area_template (vo.coverage), so the dashboard and
+-- the morning report can name zones without the world DB.
+CREATE TABLE IF NOT EXISTS zones (id INTEGER PRIMARY KEY, name TEXT, map INTEGER);
+-- Each line's Voice Pack (vo.packs) and zone (its NPC's main spawn zone, else its quest's zone), refreshed by
+-- vo extract, vo package and vo run when the world DB is there. Coverage (dashboard, morning report) reads it.
+CREATE TABLE IF NOT EXISTS line_packs (line_id INTEGER PRIMARY KEY, pack TEXT, zone INTEGER);
+-- Spot-check ratings (vo.ratings), folded in from the dashboard's rate-line / flag-line / flag-voice review_actions
+-- by vo run and vo voices. rating: up | down | flag. line_id is NULL for a flag on a whole voice. at: the action's
+-- created_at (UTC). A line's latest up/down counts; a voice with REROLL_DOWNS lines rated down is queued a re-roll.
+CREATE TABLE IF NOT EXISTS ratings (
+  id INTEGER PRIMARY KEY, action_id INTEGER UNIQUE, line_id INTEGER, voice_id TEXT, npc_id INTEGER,
+  rating TEXT NOT NULL, note TEXT, at TEXT
+);
+CREATE INDEX IF NOT EXISTS ratings_voice ON ratings (voice_id);
 """
 
 # Columns added after a table was first created: (table, column, type). connect() adds any that are missing.
@@ -132,6 +146,7 @@ MIGRATIONS = [
     ("candidates", "anchor_chain", "TEXT"),
     ("candidates", "raw_path", "TEXT"),
     ("candidates", "label", "TEXT"),
+    ("capture", "ingested_at", "TEXT"),     # local ISO time vo ingest stored it (the morning report's "new Capture")
 ]
 
 # Fills source_text on core lines: the text before their first Drift update, else their current text.
