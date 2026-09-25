@@ -318,3 +318,153 @@ def test_continuation_kwargs_and_chunks():
 def test_dialect_wer():
     assert prepare.dialect_wer("Ah, mon, de spirits told me you be comin'.", "Ah man, the spirits told me you be coming.") == 0
     assert prepare.describe("Base.", ["deeper", "less theatrical."]) == "Base. deeper. less theatrical."
+
+
+# --- anchor effect chains and bake-off seeds (#10 round 5) -----------------------------------------------------------
+
+class CountingChain:
+    """A stand-in effect chain: halves the level, and counts its calls."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def __call__(self, samples, rate):
+        self.calls += 1
+        return np.asarray(samples, dtype=np.float32) * 0.5
+
+
+def test_anchor_chain_processes_the_anchor_once_not_the_lines(small, tmp_path, monkeypatch):
+    import dataclasses
+
+    from vo import effects
+    chain = CountingChain()
+    monkeypatch.setitem(effects.CHAINS, "test", chain)
+    monkeypatch.setitem(archetypes.STYLE, "orc_f", dataclasses.replace(archetypes.STYLE["orc_f"], anchor_chain="test"))
+    eng = FakeEngine()
+    _prepare(small, tmp_path, eng)
+    assert chain.calls == 2  # once per orc_f Candidate anchor; never per sample line (2 x 2 orc_f samples rendered)
+    assert small.execute("SELECT anchor_chain, effect_chain FROM archetypes WHERE id = 'orc_f'").fetchone()[:] == (
+        "test", None)
+    cands = small.execute("SELECT * FROM candidates WHERE archetype = 'orc_f' ORDER BY id").fetchall()
+    for c in cands:
+        assert c["anchor_chain"] == "test" and Path(c["raw_path"]).name == Path(c["path"]).stem + "_raw.wav"
+        processed, _ = prepare.read_wav(Path(c["path"]))
+        raw, _ = prepare.read_wav(Path(c["raw_path"]))
+        assert np.allclose(processed, raw * 0.5, atol=2e-4)
+    # Samples continue from the processed clip.
+    assert {c[1] for c in eng.continue_calls if "orc_f" in c[1]} == {c["path"] for c in cands}
+    troll = small.execute("SELECT anchor_chain, raw_path FROM candidates WHERE id = 'troll_m/g0s0'").fetchone()
+    assert troll[:] == (None, None)
+
+    _prepare(small, tmp_path, FakeEngine())  # idempotent: nothing processed again
+    assert chain.calls == 2
+
+    # The lock carries the processed anchor (and where it came from); an Archetype without a chain is unchanged.
+    _act(small, "approve-candidate", "orc_f/g0s1")
+    _act(small, "approve-candidate", "troll_m/g0s0")
+    s, _ = _prepare(small, tmp_path, FakeEngine())
+    assert s.lock == "written" and chain.calls == 2
+    data = lock.load(tmp_path / "approved_voices.json")
+    o = data["archetypes"]["orc_f"]
+    assert o["anchor"] == cands[1]["path"] and o["anchor_chain"] == "test" and o["raw_anchor"] == cands[1]["raw_path"]
+    assert o["effect_chain"] is None
+    assert "anchor_chain" not in data["archetypes"]["troll_m"]
+    # vo run continues from the processed anchor and applies no per-line chain.
+    eng = FakeEngine()
+    voxcpm.Backend(eng, data).render("Go now.", "orc_f@orc_f/g0s1", 3)
+    assert eng.continue_calls[0][1] == cands[1]["path"] and chain.calls == 2
+
+
+@pytest.fixture
+def orcs(tmp_path):
+    """One orc male NPC with lines, and a fake bake-off build dir holding the seeded clips."""
+    from vo import bakeoff_seeds
+    conn = db.connect(tmp_path / "vo.sqlite")
+    conn.executemany("INSERT INTO npcs (id, name, race, gender) VALUES (?, ?, 'Orc', ?)",
+                     [(1, "Grok", "male"), (2, "Grunta", "female")])
+    rows = [(10, "gossip", "Lok'tar. The Horde stands strong, and so must you, if you want to live out here."),
+            (11, "quest_detail", "The quilboar raid our caravans. Take your axe and teach them fear, then return.")]
+    conn.executemany("INSERT INTO lines (id, npc_id, type, raw_text, tts_text) VALUES (?, 1, ?, ?, ?)",
+                     [(i, t, x, x) for i, t, x in rows])
+    conn.commit()
+    root = tmp_path / "build"
+    for i, sd in enumerate(bakeoff_seeds.SEEDS["orc_m"]):
+        if not (root / sd.source).exists():
+            prepare.write_wav(root / sd.source, *FakeEngine._tone(i))
+    return conn, root
+
+
+def test_import_bakeoff_seeds_orc_m_and_is_idempotent(orcs, tmp_path, monkeypatch):
+    from vo import bakeoff_seeds, effects
+    conn, root = orcs
+    chain = CountingChain()
+    monkeypatch.setitem(effects.CHAINS, "orc", chain)
+    eng = FakeEngine()
+    s, _ = _prepare(conn, tmp_path, eng, import_bakeoff=["orc_m"], bakeoff_root=root)
+    assert eng.design_calls == []  # orc_m: no fresh voice-design Candidates
+    cands = {c["id"]: c for c in conn.execute("SELECT * FROM candidates WHERE archetype = 'orc_m' ORDER BY rowid")}
+    assert list(cands) == ["orc_m/r4-s6-orc", "orc_m/growl-s7-orc", "orc_m/tags-s6-orc", "orc_m/growl-s7",
+                           "orc_m/tags-s6"]
+    assert s.candidates == 6  # 5 seeds + the Narrator
+    win = cands["orc_m/r4-s6-orc"]
+    assert (win["label"], win["seed"], win["anchor_chain"], win["status"]) == (
+        "r4-s6 + orc chain (bake-off winner)", 6, "orc", "pending")
+    assert win["anchor_text"] == archetypes.A_ORC and win["description"] == bakeoff_seeds.R4_ORC_M
+    assert Path(win["raw_path"]).exists() and Path(win["path"]).parent == (tmp_path / "candidates/orc_m/bakeoff").resolve()
+    assert (cands["orc_m/growl-s7"]["anchor_chain"], cands["orc_m/growl-s7"]["raw_path"]) == (None, None)
+    assert chain.calls == 3  # the three "+ orc chain" anchors, once each
+    # Their sample lines render like any Candidate's: continuation from the (processed) anchor, no per-line chain.
+    assert len(eng.continue_calls) == 5 * 2 and {c[4] for c in eng.continue_calls} == {"cont"}
+    assert {c[1] for c in eng.continue_calls} == {c["path"] for c in cands.values()}
+    assert conn.execute("SELECT COUNT(*) FROM candidate_samples").fetchone()[0] == 10
+
+    # Idempotent: nothing re-imported, re-processed or re-rendered; a review survives a re-import.
+    _act(conn, "approve-candidate", "orc_m/r4-s6-orc")
+    eng = FakeEngine()
+    s, _ = _prepare(conn, tmp_path, eng, import_bakeoff=["orc_m"], bakeoff_root=root)
+    assert (s.candidates, s.samples, chain.calls, eng.design_calls, eng.continue_calls) == (0, 0, 3, [], [])
+    assert conn.execute("SELECT COUNT(*) FROM candidates WHERE archetype = 'orc_m'").fetchone()[0] == 5
+    assert conn.execute("SELECT status FROM candidates WHERE id = 'orc_m/r4-s6-orc'").fetchone()[0] == "approved"
+    e = prepare.lock_data(conn, ["orc_m"])["archetypes"]["orc_m"]  # (orc_f isn't approved: no lock file yet)
+    assert (e["anchor"], e["anchor_chain"], e["raw_anchor"]) == (win["path"], "orc", win["raw_path"])
+    assert e["voice_id"] == "voxcpm:orc_m@orc_m/r4-s6-orc" and e["mode"] == "cont"
+
+    # A plain prepare doesn't design orc_m Candidates; --design does.
+    _act(conn, "regenerate-archetype", "orc_m", {"note": "more growl"})
+    eng = FakeEngine()
+    _prepare(conn, tmp_path, eng, only=["orc_m"])
+    assert eng.design_calls == []
+    _prepare(conn, tmp_path, eng, only=["orc_m"], design=True)
+    assert len(eng.design_calls) == 2 and chain.calls == 5  # fresh designs go through the anchor chain too
+    with pytest.raises(ValueError, match="no bake-off anchors"):
+        _prepare(conn, tmp_path, eng, import_bakeoff=["orc_f"], bakeoff_root=root)
+
+
+def test_orc_m_style_and_seeds_match_the_bakeoff():
+    from vo import bakeoff_seeds
+    from vo.bakeoff import round2, round5
+    s = archetypes.STYLE["orc_m"]
+    assert (s.anchor_chain, s.effect_chain, s.design, s.mode) == ("orc", None, False, "cont")
+    assert all(x.effect_chain is None for x in archetypes.STYLE.values())  # the per-line hook is off everywhere
+    assert bakeoff_seeds.R4_ORC_M == round2.voice("orc_m").prompt == s.description
+    assert bakeoff_seeds.R5_GROWL == round5.description("growl").text
+    assert bakeoff_seeds.R5_TAGS == round5.description("tags").text
+
+
+def test_orc_chain_matches_the_bakeoff():
+    import dataclasses
+
+    from vo import dsp, effects
+    from vo.bakeoff import dsp as bdsp, round5
+    assert dataclasses.asdict(effects.ORC_CHAIN) == dataclasses.asdict(round5.ORC_CHAIN)
+    sr = 24000
+    t = np.arange(sr) / sr
+    x = (0.3 * np.sin(2 * np.pi * 110 * t) * (1 + 0.3 * np.sin(2 * np.pi * 3 * t))).astype(np.float32)
+    y = effects.apply("orc", x, sr)
+    assert y.dtype == np.float32 and len(y) == len(x) and not np.allclose(y, x)
+    assert np.array_equal(y, effects.apply("orc", x, sr))  # deterministic (Praat's RNG seeded), so is the anchor
+    # The non-Praat stages are the bake-off's, verbatim.
+    assert np.array_equal(dsp.rasp_envelope(4000, sr, 0.25, 45), bdsp.rasp_envelope(4000, sr, 0.25, 45))
+    times, f0 = np.linspace(0, 1, 200), np.full(200, 110.0)
+    assert np.array_equal(dsp.subharmonic_envelope(sr, sr, times, f0, 0.5),
+                          bdsp.subharmonic_envelope(sr, sr, times, f0, 0.5))

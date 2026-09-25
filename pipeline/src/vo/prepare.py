@@ -3,8 +3,11 @@
 1. Apply the Approval page's review_actions (approve, reject, regenerate with a note).
 2. Sync the Archetype list from the NPCs (vo.archetypes) and the race style guide into `archetypes`.
 3. For every Archetype without an approved anchor, render N Candidates (VoxCPM2 voice design of its anchor line,
-   seeded, deterministic), measure them (pitch, HNR, spectral centroid, ASR WER), and render a few of the
-   Archetype's real lines as continuation from each, so you hear whether a Candidate holds up over lines.
+   seeded, deterministic; with an anchor chain, the designed clip goes through it once and the processed clip is
+   the Candidate's anchor, see vo.effects), measure them (pitch, HNR, spectral centroid, ASR WER), and render a few
+   of the Archetype's real lines as continuation from each, so you hear whether a Candidate holds up over lines.
+   An Archetype whose style guide turns design off (orc_m) gets no fresh Candidates unless asked (`design=True`);
+   `import_bakeoff` seeds its Candidates from bake-off anchors instead (vo.bakeoff_seeds).
 4. Once every Archetype has an approved anchor, write the locked approved_voices.json (vo.lock).
 
 Idempotent and resumable: a clip already in the DB with its file on disk is not rendered again, and every clip is
@@ -22,7 +25,7 @@ from typing import Callable, Protocol
 
 import numpy as np
 
-from vo import archetypes, asr, audio, effects, lock, tts, voicefeat, voxcpm
+from vo import archetypes, asr, audio, bakeoff_seeds, effects, lock, tts, voicefeat, voxcpm
 
 DEFAULT_CANDIDATES = 8
 DEFAULT_SAMPLES = 3
@@ -69,6 +72,15 @@ def write_wav(path: Path, samples: np.ndarray, rate: int) -> None:
         w.setframerate(rate)
         w.writeframes(pcm.tobytes())
     tmp.replace(path)
+
+
+def read_wav(path: Path) -> tuple[np.ndarray, int]:
+    """A 16-bit PCM WAV as mono float32."""
+    with wave.open(str(path), "rb") as w:
+        if w.getsampwidth() != 2:
+            raise ValueError(f"{path}: expected 16-bit PCM")
+        x = np.frombuffer(w.readframes(w.getnframes()), dtype="<i2").astype(np.float32) / 32768
+        return x.reshape(-1, w.getnchannels()).mean(axis=1), w.getframerate()
 
 
 def candidate_id(aid: str, generation: int, i: int) -> str:
@@ -170,15 +182,15 @@ def sync_archetypes(conn: sqlite3.Connection) -> list[str]:
             row = conn.execute("SELECT notes FROM archetypes WHERE id = ?", (a.id,)).fetchone()
             notes = json.loads(row["notes"] or "[]") if row else []
             vals = (a.label, a.kind, a.gender, json.dumps(a.races), a.npcs, a.lines, s.description, json.dumps(notes),
-                    describe(s.description, notes), s.anchor_text, s.mode, s.effect_chain)
+                    describe(s.description, notes), s.anchor_text, s.mode, s.effect_chain, s.anchor_chain)
             if row is None:
                 conn.execute("INSERT INTO archetypes (label, kind, gender, races, npcs, lines, base_description, notes,"
-                             " description, anchor_text, mode, effect_chain, id, updated_at)"
-                             " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (*vals, a.id, now))
+                             " description, anchor_text, mode, effect_chain, anchor_chain, id, updated_at)"
+                             " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (*vals, a.id, now))
             else:
                 conn.execute("UPDATE archetypes SET label = ?, kind = ?, gender = ?, races = ?, npcs = ?, lines = ?,"
                              " base_description = ?, notes = ?, description = ?, anchor_text = ?, mode = ?,"
-                             " effect_chain = ? WHERE id = ?", (*vals, a.id))
+                             " effect_chain = ?, anchor_chain = ? WHERE id = ?", (*vals, a.id))
         n_lines = conn.execute("SELECT COUNT(*) FROM lines WHERE npc_id IS NULL").fetchone()[0]
         conn.execute("INSERT INTO archetypes (id, label, kind, lines, base_description, notes, description, mode,"
                      " approved, updated_at) VALUES (?, 'Narrator', 'narrator', ?, ?, '[]', ?, 'kokoro', ?, ?)"
@@ -253,19 +265,59 @@ def _render_candidates(conn, a: sqlite3.Row, out: Path, engine: Engine, check: _
             continue
         s = seed(gen, i)
         samples, rate = engine.design(a["anchor_text"], a["description"], s)
-        wav = out / aid / f"g{gen}s{i}.wav"
-        write_wav(wav, samples, rate)
-        feats = voicefeat.measure(samples, rate, a["gender"] != "female")
-        heard = check.heard(wav)
-        w = dialect_wer(a["anchor_text"], heard)
-        with conn:
-            conn.execute(
-                "INSERT OR REPLACE INTO candidates (id, archetype, generation, seed, description, anchor_text, path,"
-                " duration_s, f0, hnr, centroid, asr, wer, status, created_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
-                (cid, aid, gen, s, a["description"], a["anchor_text"], str(wav.resolve()), round(len(samples) / rate, 3),
-                 feats["f0"], feats["hnr"], feats["centroid"], heard, w, _now()))
-        log(f"candidate {cid} seed {s}: {len(samples) / rate:.1f}s f0 {feats['f0']} hnr {feats['hnr']} WER {w:.0%}")
+        _add_candidate(conn, a, cid, s, a["description"], samples, rate, out / aid / f"g{gen}s{i}.wav",
+                       a["anchor_chain"], None, check, log)
+        done += 1
+    return done
+
+
+def _add_candidate(conn, a: sqlite3.Row, cid: str, s: int, description: str, samples: np.ndarray, rate: int,
+                   wav: Path, chain: str | None, label: str | None, check: _Check, log) -> None:
+    """Write a Candidate anchor and its row. With an anchor chain, the clip as designed is kept as <name>_raw.wav
+    and the processed clip (applied here, once) is the anchor: measured, heard, continued from, locked."""
+    raw = None
+    if chain:
+        raw = wav.with_name(f"{wav.stem}_raw.wav")
+        write_wav(raw, samples, rate)
+        samples = effects.apply(chain, samples, rate)
+    write_wav(wav, samples, rate)
+    feats = voicefeat.measure(samples, rate, a["gender"] != "female")
+    heard = check.heard(wav)
+    w = dialect_wer(a["anchor_text"], heard)
+    with conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO candidates (id, archetype, generation, seed, description, anchor_text, path,"
+            " duration_s, f0, hnr, centroid, asr, wer, status, created_at, anchor_chain, raw_path, label)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)",
+            (cid, a["id"], a["generation"], s, description, a["anchor_text"], str(wav.resolve()),
+             round(len(samples) / rate, 3), feats["f0"], feats["hnr"], feats["centroid"], heard, w, _now(), chain,
+             str(raw.resolve()) if raw else None, label))
+    log(f"candidate {cid} seed {s}{f' + {chain} chain' if chain else ''}: {len(samples) / rate:.1f}s f0 {feats['f0']}"
+        f" hnr {feats['hnr']} WER {w:.0%}")
+
+
+BAKEOFF_ROOT = Path(__file__).resolve().parents[3] / "build"
+
+
+def seed_from_bakeoff(conn, a: sqlite3.Row, out: Path, check: _Check, root: Path = BAKEOFF_ROOT, log=print) -> int:
+    """Seed the Archetype's Candidates from bake-off anchors (vo.bakeoff_seeds), in its current generation.
+    Idempotent: a seed already in the DB with its file on disk is left alone (status and review kept)."""
+    aid = a["id"]
+    seeds = bakeoff_seeds.SEEDS.get(aid)
+    if not seeds:
+        raise ValueError(f"no bake-off anchors for {aid}; seeded: {', '.join(sorted(bakeoff_seeds.SEEDS))}")
+    missing = [str(root / sd.source) for sd in seeds if not (root / sd.source).exists()]
+    if missing:
+        raise ValueError(f"bake-off anchor(s) not found: {', '.join(missing)}")
+    done = 0
+    for sd in seeds:
+        cid = f"{aid}/{sd.key}"
+        row = conn.execute("SELECT path FROM candidates WHERE id = ?", (cid,)).fetchone()
+        if row is not None and _exists(row["path"]):
+            continue
+        samples, rate = read_wav(root / sd.source)
+        _add_candidate(conn, a, cid, sd.seed, sd.description, samples, rate, out / aid / "bakeoff" / f"{sd.key}.wav",
+                       sd.chain, sd.label, check, log)
         done += 1
     return done
 
@@ -330,13 +382,15 @@ def lock_data(conn: sqlite3.Connection, ids: list[str]) -> dict | None:
     entries = {}
     for aid in ids:
         r = conn.execute("SELECT a.label, a.races, a.mode, a.effect_chain, c.id AS cand, c.path, c.anchor_text,"
-                         " c.description, c.seed FROM archetypes a JOIN candidates c ON c.id = a.approved"
-                         " WHERE a.id = ?", (aid,)).fetchone()
+                         " c.description, c.seed, c.anchor_chain, c.raw_path FROM archetypes a JOIN candidates c"
+                         " ON c.id = a.approved WHERE a.id = ?", (aid,)).fetchone()
         if r is None or not _exists(r["path"]):
             return None
         entries[aid] = {"label": r["label"], "candidate": r["cand"], "anchor": r["path"], "transcript": r["anchor_text"],
                         "description": r["description"], "seed": r["seed"], "mode": r["mode"] or "cont",
                         "effect_chain": r["effect_chain"], "races": json.loads(r["races"] or "{}")}
+        if r["anchor_chain"]:  # `anchor` is the processed clip; the unprocessed design is kept for reference
+            entries[aid].update(anchor_chain=r["anchor_chain"], raw_anchor=r["raw_path"])
     for aid, e in entries.items():
         e["voice_id"] = lock.voice_id(aid, e)
     return {"locked": True, "model": voxcpm.REPO, "settings": voxcpm.SETTINGS,
@@ -368,24 +422,39 @@ def update_lock(conn: sqlite3.Connection, ids: list[str], p: Path, log) -> str:
 def prepare(conn: sqlite3.Connection, out: Path, *, engine: Engine | None = None,
             asr_backend: asr.ASRBackend | None = None, asr_model: str = asr.DEFAULT_MODEL,
             narrator: Renderer | None = None, only: list[str] | None = None,
-            candidates: int = DEFAULT_CANDIDATES, samples: int = DEFAULT_SAMPLES,
+            candidates: int = DEFAULT_CANDIDATES, samples: int = DEFAULT_SAMPLES, design: bool = False,
+            import_bakeoff: list[str] | None = None, bakeoff_root: Path = BAKEOFF_ROOT,
             lock_path: Path | None = None, log: Callable[[str], None] = print) -> Summary:
-    """See the module docstring. `only` limits rendering (not action consumption or the lock) to those Archetypes."""
+    """See the module docstring. `only` limits rendering (not action consumption or the lock) to those Archetypes;
+    `import_bakeoff` seeds those Archetypes' Candidates from the bake-off first (and implies `only` them if unset);
+    `design` renders fresh Candidates even where the style guide turns design off."""
     s = Summary()
     s.actions = consume_actions(conn, log)
     ids = sync_archetypes(conn)
     s.archetypes = len(ids)
+    only = only or import_bakeoff
     if only:
-        unknown = sorted(set(only) - set(ids))
+        unknown = sorted((set(only) | set(import_bakeoff or [])) - set(ids))
         if unknown:
             raise ValueError(f"unknown Archetype(s) {unknown}; one of: {', '.join(ids)}")
+        unseeded = sorted(set(import_bakeoff or []) - set(bakeoff_seeds.SEEDS))
+        if unseeded:
+            raise ValueError(f"no bake-off anchors for {unseeded}; seeded: {', '.join(sorted(bakeoff_seeds.SEEDS))}")
     engine = engine or voxcpm.engine()
     check = _Check(asr_backend, asr_model)
     s.candidates += _render_narrator(conn, out, narrator or _kokoro_narrator, log)
     npc_map = archetypes.npc_archetypes(conn)
     for aid in ids:
         a = conn.execute("SELECT * FROM archetypes WHERE id = ?", (aid,)).fetchone()
+        if import_bakeoff and aid in import_bakeoff:
+            s.candidates += seed_from_bakeoff(conn, a, out, check, bakeoff_root, log)
         if a["approved"] or (only and aid not in only):
+            continue
+        if not (design or archetypes.style(aid).design):
+            log(f"{aid} ({a['label']}): no fresh Candidates by design (seeded by --import-bakeoff {aid};"
+                f" --design renders fresh ones)")
+            lines = sample_lines(conn, [n for n, x in npc_map.items() if x == aid], samples)
+            s.samples += _render_samples(conn, a, out, engine, check, lines, log)
             continue
         # Every Candidate of this generation rejected: start the next generation (same description).
         live = conn.execute("SELECT COUNT(*) FROM candidates WHERE archetype = ? AND generation = ? AND status !="

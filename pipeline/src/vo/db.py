@@ -100,6 +100,12 @@ MIGRATIONS = [
     # A core line's identity: the Source Data wording it was extracted from. raw_text differs from it once Capture
     # recorded Drift (the line is then drifted); NULL for Capture lines.
     ("lines", "source_text", "TEXT"),
+    # Approval Gate anchor chains (vo.effects): the Archetype's chain, applied once to each Candidate anchor; per
+    # Candidate, the chain its anchor went through, its unprocessed clip, and a display label (bake-off seeds).
+    ("archetypes", "anchor_chain", "TEXT"),
+    ("candidates", "anchor_chain", "TEXT"),
+    ("candidates", "raw_path", "TEXT"),
+    ("candidates", "label", "TEXT"),
 ]
 
 # Fills source_text on core lines: the text before their first Drift update, else their current text.
