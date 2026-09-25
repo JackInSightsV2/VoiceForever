@@ -62,6 +62,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--port", type=int, default=8787)
     p.add_argument("--host", default="127.0.0.1", help="bind address (e.g. a Tailscale IP to check from a phone)")
     p.add_argument("--audio", type=Path, default=BUILD / "audio", help="audio dir to serve for playback")
+    p.add_argument("--candidates", type=Path, default=BUILD / "candidates", help="Approval Gate audio (vo prepare)")
     bo = sub.add_parser("bakeoff", help="render the model bake-off and its listening page (needs --group bakeoff)")
     bo.add_argument("--round", type=int, choices=(1, 2, 3, 4), default=1,
                     help="1: model comparison; 2: fantasy race voices (designers, cloners, DSP, VC); "
@@ -179,6 +180,7 @@ def main(argv: list[str] | None = None) -> None:
             sys.exit("vo dashboard needs Bun: https://bun.sh")
         db.connect(args.db).close()  # create it and its tables (WAL) so the dashboard can open it read-only
         os.execv(bun, [bun, str(DASHBOARD / "server.ts"), "--db", str(args.db), "--audio", str(args.audio),
+                       "--candidates", str(args.candidates),
                        "--port", str(args.port), "--host", args.host])
     elif args.command == "bakeoff" and args.round == 4:
         from vo.bakeoff import run4
