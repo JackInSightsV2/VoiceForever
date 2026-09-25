@@ -73,7 +73,7 @@ def test_sync_splits_top_names_for_review_from_auto_names(conn):
 
 def test_drafts_come_from_the_seed_table_then_rules():
     assert lexicon.draft("Kel'Thuzad") == "Kel-thoo-zahd"
-    assert lexicon.draft("Ahn'Qiraj") == "Ahn-kee-rahj"
+    assert lexicon.draft("Ahn'Qiraj") == "Ahn-kee-rahzh"
     assert lexicon.rule_draft("Qiraji") == "Kirajee"
     assert lexicon.rule_draft("Mekkatorque") == "Mekkatork"
     assert lexicon.rule_draft("Zul'Farrak") == "Zul-Farrak"

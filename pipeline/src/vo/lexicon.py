@@ -34,7 +34,7 @@ TOP = 300
 MISS_LINES = 3  # an auto name moves to its next respelling once ASR missed it in this many different lines
 ENV = "VO_LEXICON"
 FILENAME = "lexicon.json"
-DATA = resources.files("vo") / "data"
+DATA = resources.files("vo") / "lexicon_data"  # not "data": that name is repo-gitignored for the Source Data dump
 REVIEWED = ("accepted", "corrected")
 # status: pending (top name awaiting review) | accepted | corrected | auto (drafted, ASR-checked)
 

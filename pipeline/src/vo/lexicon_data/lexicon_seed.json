@@ -1,0 +1,305 @@
+{
+  "about": "Seed respellings for the Lexicon (vo.lexicon.draft): well-known WoW lore names spelled so an English TTS says them the community way. Plain hyphenated syllables, no stress marks. Each entry cites where the pronunciation comes from (warcraft.wiki.gg pronunciation notes, WoW community threads, a Blizzard forum post).",
+  "entries": {
+    "Ahn'Qiraj": {
+      "respelling": "Ahn-kee-rahzh",
+      "source": "https://warcraft.wiki.gg/wiki/Ahn'Qiraj",
+      "note": "wiki lead: IPA + respelling AHN kee-RAHZH"
+    },
+    "Alterac": {
+      "respelling": "Al-ter-ack",
+      "source": "https://www.mmo-champion.com/threads/980059-WoW-words-you-ve-always-said-quot-wrong-quot/page2",
+      "note": "forum users give Alterac as Alt-uh-rack, corroborated again on page 9 of same thread"
+    },
+    "Anub'Rekhan": {
+      "respelling": "Uh-noob-ray-kahn",
+      "source": "https://www.reddit.com/r/wildhearthstone/comments/10eect9/how_do_you_pronounce_anubrekhan/",
+      "note": "top Reddit answer 'Uh-Noob-Rey-khan' for WoW/Hearthstone raid boss name"
+    },
+    "Arathi": {
+      "respelling": "Uh-rath-ee",
+      "source": "https://warcraft.wiki.gg/wiki/Arathi",
+      "note": "wiki lead gives two forms: uh-RATH-ee or uh-RAHTH-ee"
+    },
+    "Arthas": {
+      "respelling": "Ar-thus",
+      "source": "https://warcraft.wiki.gg/wiki/Arthas_Menethil",
+      "note": "wiki lead: IPA + respelling AR-thuhs"
+    },
+    "Arugal": {
+      "respelling": "Ah-roo-gahl",
+      "source": "https://wow-ladies.livejournal.com/13651683.html",
+      "note": "WoW community pronunciation poll: \"AH-roo-gahl\" won 61.8% of 429 votes"
+    },
+    "Auberdine": {
+      "respelling": "Aw-ber-deen",
+      "source": "https://warcraft.wiki.gg/wiki/Auberdine",
+      "note": "wiki lead: IPA + respelling AW-ber-DEEN"
+    },
+    "Azeroth": {
+      "respelling": "Az-er-oth",
+      "source": "https://warcraft.wiki.gg/wiki/Azeroth",
+      "note": "wiki lead: IPA + respelling AZ-er-oth"
+    },
+    "Azshara": {
+      "respelling": "Uz-shah-rah",
+      "source": "https://www.mmo-champion.com/threads/980059-WoW-words-you-ve-always-said-quot-wrong-quot/page24",
+      "note": "community pronunciation list post (user Voyager) gives Azshara as Uz-shah-rah"
+    },
+    "C'Thun": {
+      "respelling": "Kuh-thoon",
+      "source": "https://warcraft.wiki.gg/wiki/C%27Thun",
+      "note": "wiki lead: IPA + respelling kuh-THOON"
+    },
+    "Caer": {
+      "respelling": "Kair",
+      "source": "https://warcraft.wiki.gg/wiki/Caer_Darrow",
+      "note": "wiki lead: Caer Darrow, IPA + respelling KAIR DAIR-oh (first word)"
+    },
+    "Cenarius": {
+      "respelling": "Suh-nah-ree-uhs",
+      "source": "https://warcraft.wiki.gg/wiki/Cenarius",
+      "note": "wiki lead: IPA + respelling suh-NAH-ree-uhs"
+    },
+    "Dalaran": {
+      "respelling": "Dahl-uh-rawn",
+      "source": "https://warcraft.wiki.gg/wiki/Dalaran",
+      "note": "wiki: officially pronounced DAHL-uh-RAWN"
+    },
+    "Defias": {
+      "respelling": "De-fy-us",
+      "source": "https://www.mmo-champion.com/threads/980059-WoW-words-you-ve-always-said-quot-wrong-quot/page18",
+      "note": "user states Defias is De-fy-us, from the word 'defy'"
+    },
+    "Draenei": {
+      "respelling": "Dran-eye",
+      "source": "https://warcraft.wiki.gg/wiki/Draenei",
+      "note": "wiki lead: IPA + respelling DRAN-eye"
+    },
+    "Dun Morogh": {
+      "respelling": "Doon-mohr-uh",
+      "source": "https://warcraft.wiki.gg/wiki/Dun_Morogh",
+      "note": "wiki lead gives IPA and respelling DOON MOHR-uh (also DOON mo-ROH variant)"
+    },
+    "Feralas": {
+      "respelling": "Fuh-rahl-uhs",
+      "source": "https://warcraft.wiki.gg/wiki/Feralas",
+      "note": "wiki lead: IPA + respelling fuh-RAHL-uhs"
+    },
+    "Gadgetzan": {
+      "respelling": "Gad-jit-zan",
+      "source": "https://www.mmo-champion.com/threads/1228905-Things-in-WoW-you-mispronounce(d)/page7",
+      "note": "forum post: \"It's obviously Gadget-zan, but I say gad-get-zan\""
+    },
+    "Gnomeregan": {
+      "respelling": "Nohm-ruh-gahn",
+      "source": "https://warcraft.wiki.gg/wiki/Gnomeregan",
+      "note": "wiki lead: IPA + respelling NOHM-ruh-gahn"
+    },
+    "Gurubashi": {
+      "respelling": "Goo-roo-bah-shee",
+      "source": "https://warcraft.wiki.gg/wiki/Gurubashi_tribe",
+      "note": "wiki lead: IPA + respelling GOO-roo-BAH-shee"
+    },
+    "Illidan": {
+      "respelling": "Ill-ih-duhn",
+      "source": "https://warcraft.wiki.gg/wiki/Illidan_Stormrage",
+      "note": "wiki lead: IPA + respelling ILL-ih-duhn"
+    },
+    "Kalimdor": {
+      "respelling": "Kal-im-dor",
+      "source": "https://warcraft.wiki.gg/wiki/Kalimdor",
+      "note": "wiki lead gives IPA [kalimdor] for Kalimdor"
+    },
+    "Kel'Thuzad": {
+      "respelling": "Kel-thoo-zahd",
+      "source": "https://warcraft.wiki.gg/wiki/Kel'Thuzad",
+      "note": "wiki lead: IPA + respelling KEL THOO-zahd"
+    },
+    "Loch Modan": {
+      "respelling": "Lok-moh-dahn",
+      "source": "https://www.mmo-champion.com/threads/980059-WoW-words-you-ve-always-said-quot-wrong-quot/page24",
+      "note": "forum pronunciation list: 'Loch Modan - Lokh Moh-dahn (kh like Russian X)'"
+    },
+    "Lordaeron": {
+      "respelling": "Lor-duh-ron",
+      "source": "https://warcraft.wiki.gg/wiki/Lordaeron",
+      "note": "wiki lead: IPA + respelling LOR-duh-ron"
+    },
+    "Malfurion": {
+      "respelling": "Mal-fyur-ee-uhn",
+      "source": "https://warcraft.wiki.gg/wiki/Malfurion_Stormrage",
+      "note": "wiki lead: IPA + respelling mal-FYUR-ee-uhn"
+    },
+    "Maraudon": {
+      "respelling": "Mawr-uh-don",
+      "source": "https://warcraft.wiki.gg/wiki/Maraudon",
+      "note": "wiki lead: IPA + respelling MAWR-uh-don"
+    },
+    "Medivh": {
+      "respelling": "Meh-deev",
+      "source": "https://www.mmo-champion.com/threads/980059-WoW-words-you-ve-always-said-quot-wrong-quot",
+      "note": "mmo-champion thread: \"I pronounced Medivh 'Med-iv', until I learned that it's 'Med-eev'\""
+    },
+    "Menethil": {
+      "respelling": "Men-uh-thil",
+      "source": "https://warcraft.wiki.gg/wiki/Arthas_Menethil",
+      "note": "wiki lead gives IPA + respelling MEN-uh-thil"
+    },
+    "Morogh": {
+      "respelling": "Mor-oh",
+      "source": "https://warcraft.wiki.gg/wiki/Dun_Morogh",
+      "note": "Dun Morogh wiki lead gives two forms: DOON MOHR-uh or DOON mo-ROH"
+    },
+    "Naxxramas": {
+      "respelling": "Nax-rahm-uhs",
+      "source": "https://us.forums.blizzard.com/en/wow/t/how-do-you-pronounce-naxxramas/257444/32",
+      "note": "Blizzard forum poster: Lich King says \"Nax-rahm-us\" in cutscene"
+    },
+    "Nefarian": {
+      "respelling": "Nuh-fair-ee-un",
+      "source": "https://warcraft.wiki.gg/wiki/Nefarian",
+      "note": "wiki lead: IPA + respelling nuh-FAIR-ee-un"
+    },
+    "Onyxia": {
+      "respelling": "Oh-nik-see-uh",
+      "source": "https://warcraft.wiki.gg/wiki/Onyxia",
+      "note": "wiki lead: IPA + respelling oh-NIK-see-uh"
+    },
+    "Orgrimmar": {
+      "respelling": "Or-grim-ar",
+      "source": "https://warcraft.wiki.gg/wiki/Orgrimmar",
+      "note": "wiki lead gives IPA [orgrimar]"
+    },
+    "Qiraji": {
+      "respelling": "Kee-rah-zhee",
+      "source": "https://warcraft.wiki.gg/wiki/Qiraji",
+      "note": "wiki lead: IPA + respelling kee-RAHZH-ee"
+    },
+    "Quel'Thalas": {
+      "respelling": "Kwel-thuh-lahs",
+      "source": "https://warcraft.wiki.gg/wiki/Quel'Thalas",
+      "note": "wiki lead: IPA + respelling KWEL-thuh-lahs"
+    },
+    "Quel'dorei": {
+      "respelling": "Kwel-doh-rye",
+      "source": "https://warcraft.wiki.gg/wiki/High_elf",
+      "note": "wiki High elf article: IPA, respelling KWEL-doh-RYE"
+    },
+    "Ragnaros": {
+      "respelling": "Rag-nah-ros",
+      "source": "https://www.mmo-champion.com/threads/980059-WoW-words-you-ve-always-said-quot-wrong-quot/page24",
+      "note": "same community pronunciation list post gives Ragnaros as Rag-nah-ros"
+    },
+    "Rastakhan": {
+      "respelling": "Rah-stuh-kawn",
+      "source": "https://warcraft.wiki.gg/wiki/Rastakhan",
+      "note": "wiki lead: \"God King Rastakhan (pronounced 'RAH-stuh-kawn')\""
+    },
+    "Scholomance": {
+      "respelling": "Skoh-loh-mance",
+      "source": "https://warcraft.wiki.gg/wiki/Scholomance",
+      "note": "wiki lead: IPA + respelling SKOH-loh-mance"
+    },
+    "Shu'halo": {
+      "respelling": "Shoo-hah-loh",
+      "source": "https://warcraft.wiki.gg/wiki/Shu%27halo",
+      "note": "wiki lead: IPA, respelling shoo hah-LOH"
+    },
+    "Stratholme": {
+      "respelling": "Strath-ohlm",
+      "source": "https://warcraft.wiki.gg/wiki/Stratholme",
+      "note": "wiki lead: IPA + respelling STRATH-ohlm"
+    },
+    "Stromgarde": {
+      "respelling": "Strom-gard",
+      "source": "https://www.mmo-champion.com/threads/980059-WoW-words-you-ve-always-said-quot-wrong-quot/page26",
+      "note": "forum pronunciation thread: 'Stromgarde = STORM GUARD'"
+    },
+    "Sylvanas": {
+      "respelling": "Sil-vah-nuhs",
+      "source": "https://warcraft.wiki.gg/wiki/Sylvanas_Windrunner",
+      "note": "wiki lead: IPA + respelling sil-VAH-nuhs"
+    },
+    "Tanaris": {
+      "respelling": "Tuh-nair-iss",
+      "source": "https://warcraft.wiki.gg/wiki/Tanaris",
+      "note": "wiki lead gives two forms: tuh-NAYR-iss or tuh-NUR-iss"
+    },
+    "Taurajo": {
+      "respelling": "Tor-uh-hoh",
+      "source": "https://warcraft.wiki.gg/wiki/Taur-ahe",
+      "note": "wiki trivia: Camp Taurajo pronounced tor-uh-hoh, by analogy with Navajo"
+    },
+    "Tauren": {
+      "respelling": "Tawr-uhn",
+      "source": "https://warcraft.wiki.gg/wiki/Tauren",
+      "note": "wiki lead: IPA + respelling TAWR-uhn"
+    },
+    "Teldrassil": {
+      "respelling": "Tell-druh-sill",
+      "source": "https://warcraft.wiki.gg/wiki/Teldrassil",
+      "note": "wiki lead: IPA + respelling TELL-druh-sill"
+    },
+    "Thrall": {
+      "respelling": "Thrawl",
+      "source": "https://warcraft.wiki.gg/wiki/Thrall",
+      "note": "wiki lead: IPA + respelling THRAWL"
+    },
+    "Tirisfal": {
+      "respelling": "Teer-ihs-fahl",
+      "source": "https://warcraft.wiki.gg/wiki/Tirisfal_Glades",
+      "note": "wiki lead: IPA + respelling TEER-ihs-fahl"
+    },
+    "Tyrande": {
+      "respelling": "Tuh-rahn-duh",
+      "source": "https://warcraft.wiki.gg/wiki/Tyrande_Whisperwind",
+      "note": "wiki lead: IPA + respelling tuh-RAHN-duh"
+    },
+    "Uldaman": {
+      "respelling": "Ool-duh-mahn",
+      "source": "https://warcraft.wiki.gg/wiki/Uldaman",
+      "note": "wiki lead: IPA + respelling OOL-duh-mahn"
+    },
+    "Uldum": {
+      "respelling": "Ool-doom",
+      "source": "https://warcraft.wiki.gg/wiki/Uldum",
+      "note": "wiki lead: Uldum, IPA + respelling OOL-DOOM"
+    },
+    "Un'Goro": {
+      "respelling": "Uhn-goh-roh",
+      "source": "https://warcraft.wiki.gg/wiki/Un'Goro_Crater",
+      "note": "wiki lead: IPA + respelling uhn-GOH-roh"
+    },
+    "Varimathras": {
+      "respelling": "Vah-rih-mah-thrahs",
+      "source": "https://www.mmo-champion.com/threads/980059-WoW-words-you-ve-always-said-quot-wrong-quot/page12",
+      "note": "forum pronunciation guide reply: 'Vah-rih-mah-thrahs'"
+    },
+    "Ysera": {
+      "respelling": "Ee-ser-ah",
+      "source": "https://www.mmo-champion.com/threads/980059-WoW-words-you-ve-always-said-quot-wrong-quot/page24",
+      "note": "forum pronunciation list (user Voyager): 'Ysera - Ee-serah'"
+    },
+    "Zandalar": {
+      "respelling": "Zan-duh-lar",
+      "source": "https://warcraft.wiki.gg/wiki/Zandalar",
+      "note": "wiki lead: IPA + respelling ZAN-duh-lar"
+    },
+    "Zul'Aman": {
+      "respelling": "Zool-uh-mahn",
+      "source": "https://warcraft.wiki.gg/wiki/Zul%27Aman",
+      "note": "wiki lead: IPA, respelling ZOOL-uh-mahn"
+    },
+    "Zul'Farrak": {
+      "respelling": "Zool-fuh-rahk",
+      "source": "https://warcraft.wiki.gg/wiki/Zul'Farrak",
+      "note": "wiki lead: IPA + respelling ZOOL-fuh-RAHK"
+    },
+    "Zul'Gurub": {
+      "respelling": "Zool-goo-roob",
+      "source": "https://warcraft.wiki.gg/wiki/Zul'Gurub",
+      "note": "wiki lead: IPA + respelling ZOOL goo-ROOB"
+    }
+  }
+}
