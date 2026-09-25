@@ -94,9 +94,10 @@ def embed(out: Path, results: dict, log) -> dict:
     """{file: embedding} for the picked voices' anchors, reference clips and step-2 clips (cached)."""
     path = out / "embeddings.json"
     cache = json.loads(path.read_text()) if path.exists() else {}
-    files = [c["file"] for c in results["reference"].values()]
+    files = []
     for voice, cid in results["picks"].items():
         if cid != round4.NONE:
+            files += [c["file"] for c in round4.reference_clips(results, voice).values()]
             files.append(results["anchors"][voice]["cands"][cid]["file"])
     files += [c["file"] for clips in results["clips"].values() for c in clips.values()]
     todo = [f for f in dict.fromkeys(files) if f not in cache and (out / f).exists()]

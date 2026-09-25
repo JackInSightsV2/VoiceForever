@@ -162,7 +162,7 @@ def build_stats(results: dict, emb: dict) -> dict:
             r["d_st"] = round3.semitones(r["f0"], base.get("f0"))
             r["d_hnr"] = (round(r["hnr"] - base["hnr"], 1)
                           if r["hnr"] is not None and base.get("hnr") is not None else None)
-            r["keeps"] = round3.keeps_character(r, base) if base else None
+            r["keeps"] = round3.keeps_character(r, base, round2.voice(voice).target.f0) if base else None
             rows[vid] = r
         out[voice] = rows
     return out
