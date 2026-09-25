@@ -6,6 +6,7 @@ import { join, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 import { ActionError, insertAction } from "./src/actions";
 import { approval, overview, quarantine } from "./src/queries";
+import { separation } from "./src/separation";
 
 const PUBLIC = join(import.meta.dir, "public");
 const PAGES = ["/", "/quarantine", "/approval", "/coverage", "/npcs", "/spot-check", "/separation"];
@@ -15,6 +16,7 @@ export interface Options {
   db: string;
   audio: string;
   candidates?: string; // Approval Gate audio (vo prepare's build/candidates), served under /candidates/; default next to audio
+  voices?: string; // NPC anchors (vo voices' build/voices), served under /voices/; default next to audio
   port?: number;
   host?: string;
   sseIntervalMs?: number;
@@ -33,7 +35,12 @@ const snapshots: Record<string, (o: Options, db: Database) => unknown> = {
   overview: (_o, db) => overview(db),
   quarantine: (o, db) => quarantine(db, o.audio),
   approval: (o, db) => approval(db, candidatesDir(o)),
+  separation: (o, db) => separation(db, voicesDir(o), o.audio),
 };
+
+function voicesDir(o: Options) {
+  return o.voices ?? join(resolve(o.audio), "..", "voices");
+}
 
 function candidatesDir(o: Options) {
   return o.candidates ?? join(resolve(o.audio), "..", "candidates");
@@ -126,6 +133,7 @@ export function createServer(opts: Options) {
       }
       if (req.method === "GET" && path.startsWith("/audio/")) return serveAudio(opts.audio, path.slice(7));
       if (req.method === "GET" && path.startsWith("/candidates/")) return serveAudio(candidatesDir(opts), path.slice(12));
+      if (req.method === "GET" && path.startsWith("/voices/")) return serveAudio(voicesDir(opts), path.slice(8));
       return json({ error: "not found" }, 404);
     },
     error(e) {
@@ -150,6 +158,7 @@ if (import.meta.main) {
       db: { type: "string", default: join(repo, "build", "vo.sqlite") },
       audio: { type: "string", default: join(repo, "build", "audio") },
       candidates: { type: "string", default: join(repo, "build", "candidates") },
+      voices: { type: "string", default: join(repo, "build", "voices") },
       port: { type: "string", default: "8787" },
       host: { type: "string", default: "127.0.0.1" },
     },
@@ -158,6 +167,7 @@ if (import.meta.main) {
     db: values.db!,
     audio: values.audio!,
     candidates: values.candidates!,
+    voices: values.voices!,
     port: Number(values.port),
     host: values.host,
   });

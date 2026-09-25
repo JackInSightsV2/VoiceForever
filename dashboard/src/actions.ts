@@ -1,6 +1,7 @@
 // Write side: the dashboard's only writes are review_actions rows, consumed by `vo run`. It never touches audio.
 import type { Database } from "bun:sqlite";
 import { APPROVAL_ACTIONS, runState } from "./queries";
+import { SEPARATION_ACTIONS, validateSeparation } from "./separation";
 
 export const LINE_ACTIONS = ["retry-line", "skip-line", "edit-tts-text"] as const;
 export const RUN_ACTIONS = ["pause-run", "resume-run", "set-until"] as const;
@@ -88,6 +89,9 @@ export function validate(read: Database, req: ActionRequest, now: Date = new Dat
     if (note.trim().length > MAX_NOTE) throw new ActionError(`note is over ${MAX_NOTE} characters`);
     return { action, target: id, payload: note.trim() ? JSON.stringify({ note: note.trim() }) : null };
   }
+
+  // Separation page: re-roll an NPC Voice, consumed by `vo voices`.
+  if ((SEPARATION_ACTIONS as readonly string[]).includes(action)) return validateSeparation(read, action, req.target);
 
   throw new ActionError(`unknown action ${JSON.stringify(action)}`);
 }

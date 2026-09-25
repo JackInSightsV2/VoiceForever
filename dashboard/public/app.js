@@ -59,7 +59,12 @@ async function act(action, target, payload) {
     toast(`Failed: ${body.error || res.status}`);
     return false;
   }
-  const by = action.endsWith("-candidate") || action === "regenerate-archetype" ? "vo prepare" : "vo run";
+  const by =
+    action.endsWith("-candidate") || action === "regenerate-archetype"
+      ? "vo prepare"
+      : action === "reroll-voice"
+        ? "vo voices"
+        : "vo run";
   toast(`Queued ${action} (#${body.id}), applied by ${by}`);
   refresh();
   return true;
@@ -406,6 +411,72 @@ function candCard(a, c) {
   </div>`;
 }
 
+// --- Separation -------------------------------------------------------------------------------------------------
+
+function renderSeparation(d) {
+  const s = d.stats;
+  const who = (v) =>
+    `<b>${esc(v.name)}</b>${v.subname ? ` <span class="muted">&lt;${esc(v.subname)}&gt;</span>` : ""} <span class="mono muted">${v.npc_id}</span>`;
+  const voiceCol = (v) => `<div class="sep-side">
+      <div class="chead">${who(v)}${v.is_named ? `<span class="tag">named</span>` : ""}
+        ${v.status === "leftover" ? `<span class="tag bad" title="${esc(v.issue || "")}">leftover: ${esc(v.issue || "")}</span>` : ""}
+        ${v.roll ? `<span class="muted small">roll ${v.roll}</span>` : ""}</div>
+      <div class="sample"><div class="slabel"><span class="muted">anchor</span><span class="stext" title="${esc(v.prompt || "")}">${esc(v.prompt || "")}</span></div>
+        ${v.anchor_url ? `<audio controls preload="none" src="${esc(v.anchor_url)}"></audio>` : `<span class="muted">anchor missing</span>`}</div>
+      ${
+        v.sample
+          ? `<div class="sample"><div class="slabel"><span class="muted">line ${v.sample.line_id}</span><span class="stext" title="${esc(v.sample.text)}">${esc(v.sample.text)}</span></div>
+             ${v.sample.url ? `<audio controls preload="none" src="${esc(v.sample.url)}"></audio>` : ""}</div>`
+          : `<div class="muted small">No line rendered in this voice yet.</div>`
+      }
+      <div class="qactions">${
+        v.queued
+          ? `<span class="queued">queued: re-roll</span>`
+          : `<button data-reroll="${v.npc_id}">Re-roll ${esc(v.name)}</button>`
+      }</div>
+    </div>`;
+  main.innerHTML = `<h1>Separation</h1>
+  <p class="muted">Neighbours (spawns within 150 yd, or a shared quest chain) must sound clearly different. These are the
+  most similar same-Archetype Neighbour pairs by their anchors' speaker similarity (WavLM-SV cosine; 1 = same voice).
+  Listen to both; if they sound like one person, re-roll either voice. <span class=mono>vo voices</span> applies
+  re-rolls. Use these pairs to calibrate the Neighbour floor by ear.</p>
+  <section class="card"><div class="tiles">
+    <div class="tile"><div class="v">${fmt(s.voices)}</div><div class="l">NPC Voices</div></div>
+    <div class="tile"><div class="v">${fmt(s.pairs)}</div><div class="l">Neighbour pairs</div></div>
+    <div class="tile"><div class="v">${fmt(s.per_npc, 1)}</div><div class="l">Neighbours per NPC</div></div>
+    <div class="tile"><div class="v">${fmt(s.voiced_pairs)}</div><div class="l">pairs with both voiced</div></div>
+    <div class="tile"><div class="v ${s.leftovers ? "bad" : ""}">${fmt(s.leftovers)}</div><div class="l">leftovers</div></div>
+  </div></section>
+  ${d.pairs.length ? "" : `<div class="card empty">No voiced Neighbour pairs yet: run <span class=mono>vo voices</span>.</div>`}
+  <div class="seps">${d.pairs
+    .map(
+      (p) => `<section class="card sep">
+      <div class="ahead"><span class="sim" title="anchor similarity">${p.sim.toFixed(3)}</span>
+        <span class="mono muted">${esc(p.archetype)}</span><span class="tag">${esc(p.reason)}</span>
+        ${p.distance != null ? `<span class="muted small">${fmt(p.distance)} yd apart</span>` : ""}</div>
+      <div class="sep-pair">${voiceCol(p.a)}${voiceCol(p.b)}</div></section>`,
+    )
+    .join("")}</div>
+  ${
+    d.leftovers.length
+      ? `<h2 style="margin-top:24px">Leftovers (${d.leftovers.length})</h2>
+    <p class="muted small">NPCs whose voice missed a constraint after every re-roll. They keep their best voice; nothing is blocked.</p>
+    <section class="card scroll"><table><tr><th>NPC</th><th>Archetype</th><th>Issue</th><th>Anchor</th><th></th></tr>
+    ${d.leftovers
+      .map(
+        (l) => `<tr><td><b>${esc(l.name)}</b> <span class="mono muted">${l.npc_id}</span></td><td class="mono">${esc(l.archetype)}</td>
+        <td>${esc(l.detail || l.issue)}</td>
+        <td>${l.anchor_url ? `<audio controls preload="none" src="${esc(l.anchor_url)}"></audio>` : ""}</td>
+        <td>${l.queued ? `<span class="queued">queued</span>` : `<button data-reroll="${l.npc_id}">Re-roll</button>`}</td></tr>`,
+      )
+      .join("")}</table></section>`
+      : ""
+  }`;
+  main.querySelectorAll("[data-reroll]").forEach((b) =>
+    b.addEventListener("click", () => act("reroll-voice", Number(b.dataset.reroll))),
+  );
+}
+
 // --- Coming pages -----------------------------------------------------------------------------------------------
 
 function renderSoon() {
@@ -415,7 +486,8 @@ function renderSoon() {
 
 // --- Live updates -----------------------------------------------------------------------------------------------
 
-const RENDER = { overview: renderOverview, quarantine: renderQuarantine, approval: renderApproval };
+const RENDER = { overview: renderOverview, quarantine: renderQuarantine, approval: renderApproval, separation: renderSeparation };
+const LISTENING = new Set(["approval", "separation"]); // pages for listening: live updates wait for the player
 let pending = null;
 let lastSnapshot = null;
 
@@ -425,19 +497,19 @@ const approvalBusy = () =>
   (document.activeElement?.tagName === "TEXTAREA" && document.activeElement.value.trim() !== "");
 
 function show(d) {
-  if ((page === "quarantine" && editing.size) || (page === "approval" && approvalBusy())) {
+  if ((page === "quarantine" && editing.size) || (LISTENING.has(page) && approvalBusy())) {
     pending = d; // don't clobber an open editor or a playing clip
     return;
   }
   pending = null;
   const snap = JSON.stringify(d);
-  if (page === "approval" && snap === lastSnapshot) return; // unchanged: keep the players as they are
+  if (LISTENING.has(page) && snap === lastSnapshot) return; // unchanged: keep the players as they are
   lastSnapshot = snap;
   RENDER[page](d);
 }
 
-document.addEventListener("ended", () => pending && page === "approval" && show(pending), true);
-document.addEventListener("pause", () => pending && page === "approval" && show(pending), true);
+document.addEventListener("ended", () => pending && LISTENING.has(page) && show(pending), true);
+document.addEventListener("pause", () => pending && LISTENING.has(page) && show(pending), true);
 
 function connect() {
   const live = $("#live");
