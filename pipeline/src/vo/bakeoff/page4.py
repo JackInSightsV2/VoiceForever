@@ -67,9 +67,11 @@ def _median(clips: list[dict], name: str) -> float | None:
     return round3.median_feature(clips, name)
 
 
-def candidate_card(voice: str, cid: str, c: dict, ref_f0: float | None, ref_hnr: float | None) -> str:
+def candidate_card(voice: str, cid: str, c: dict, ref_f0: float | None, ref_hnr: float | None, text: str = "") -> str:
     f = c.get("features") or {}
-    wer = c.get("wer")
+    raw = c.get("wer")
+    wer = round4.dialect_wer(text, c["asr"]) if text and c.get("asr") is not None else raw
+    folded = f" (raw {raw:.0%}; dialect spellings folded)" if raw is not None and wer != raw else ""
     warn = (f' <span class="warn">ASR struggled: continuation inherits misreadings</span>'
             if wer is not None and wer > round4.ANCHOR_MAX_WER else "")
     hnr = f.get("hnr")
@@ -80,7 +82,7 @@ def candidate_card(voice: str, cid: str, c: dict, ref_f0: float | None, ref_hnr:
             f'<dl><dt>pitch</dt><dd>{_fmt(f.get("f0"), "{:.0f} Hz")}{_st(f.get("f0"), ref_f0)}</dd>'
             f'<dt>roughness</dt><dd>HNR {_fmt(hnr, "{:.1f} dB")}{d_hnr}</dd>'
             f'<dt>darkness</dt><dd>centroid {_fmt(f.get("centroid"), "{:.0f} Hz")}</dd>'
-            f'<dt>ASR</dt><dd class="{_wer_cls(wer)}">WER {_fmt(wer, "{:.0%}")}{warn}</dd></dl>'
+            f'<dt>ASR</dt><dd class="{_wer_cls(wer)}">WER {_fmt(wer, "{:.0%}")}<small class="muted">{folded}</small>{warn}</dd></dl>'
             f'<details><summary>heard</summary><small>{escape(c.get("asr", ""))}</small></details>'
             f'<label class="pick"><input type="radio" class="p" name="pick-{escape(voice)}" data-voice="{escape(voice)}" '
             f'value="{escape(cid)}"> pick this anchor</label></div>')
@@ -105,7 +107,8 @@ def pick_section(results: dict, voice: str) -> str:
     ref = list(round4.reference_clips(results, voice).values())
     ref_f0, ref_hnr = _median(ref, "f0"), _median(ref, "hnr")
     cands = sorted(rec.get("cands", {}).items(), key=lambda x: int(x[0][1:]))
-    grid = "".join(candidate_card(voice, cid, c, ref_f0, ref_hnr) for cid, c in cands) or '<p class="muted">Not rendered.</p>'
+    text = rec.get("text", round4.anchor_text(voice))
+    grid = "".join(candidate_card(voice, cid, c, ref_f0, ref_hnr, text) for cid, c in cands) or '<p class="muted">Not rendered.</p>'
     return (f'<h2 id="v-{voice}">{escape(v.label)} <small class="muted">({escape(voice)})</small></h2>'
             f'<p><small class="muted">Description: {escape(rec.get("description", v.prompt))}</small></p>'
             f'<p><small class="muted">Anchor transcript (the continuation prompt): "{escape(rec.get("text", round4.anchor_text(voice)))}"'

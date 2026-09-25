@@ -99,3 +99,12 @@ def test_result_page_shows_picked_voice_cards_and_ratings():
     assert 'name="cons:cont/orc_m"' in html and 'name="char:cont/orc_m"' in html
     assert "vo-bakeoff-r4-v1" in html and "vo-bakeoff-r3-v1" not in html
     assert "picked" in html and "none" in html
+
+
+def test_dialect_wer_folds_script_spellings_but_not_misreadings():
+    text = round4.ANCHOR_TEXT["troll"]
+    clear = ("Ah, mon, the spirits told me you be coming. Them raptors in the jungle be stealing our eggs again. "
+             "You go bring them back and I make it worth your while.")
+    assert round4.dialect_wer(text, clear) == 0.0
+    assert round4.dialect_wer(text, clear.replace("raptors", "rappers")) > 0
+    assert round4.dialect_wer(round4.ANCHOR_TEXT["orc"], round4.ANCHOR_TEXT["orc"]) == 0.0

@@ -17,7 +17,7 @@ import json
 import re
 from dataclasses import dataclass
 
-from vo.bakeoff import round2, round3
+from vo.bakeoff import metrics, round2, round3
 
 VOICES = ("orc_m", "orc_f", "human_f", "human_m", "troll_f")
 SEEDS = tuple(range(8))  # candidate anchors per voice
@@ -35,6 +35,18 @@ ANCHOR_TEXT = {
     "human": ("Traveller, a moment of your time. Bandits have been raiding the farms along the river road, and "
               "the guard is stretched too thin. If you could drive them off, the whole village would be in your debt."),
 }
+
+
+# Script dialect spellings and their standard forms: ASR writes the standard word, which isn't a misreading.
+DIALECT = {"de": "the", "dem": "them", "dis": "this", "dat": "that", "mon": "man", "an": "and",
+           "comin": "coming", "stealin": "stealing", "youd": "you"}
+
+
+def dialect_wer(text: str, heard: str) -> float:
+    """WER with dialect spellings folded to standard words on both sides (troll WER is otherwise ~20%
+    on perfectly clear clips, from "de"/"dem"/"comin'" alone)."""
+    fold = lambda s: " ".join(DIALECT.get(w, w) for w in metrics.normalise(s))
+    return round(metrics.wer(fold(text), fold(heard)), 3)
 
 
 def anchor_text(voice_id: str) -> str:
