@@ -88,9 +88,9 @@ def test_variation_is_deterministic_and_bounded():
     assert voices.variation(npc(1, role="guard"), 0, 0).startswith("Speaks like a watchful, dutiful guard.")
     for i in range(50):
         s = voices.shift(npc(i), 0, 0, 0)
-        assert 0.8 <= abs(s.pitch_st) <= 2.0 and abs(s.formant - 1) <= 0.035 and abs(s.pace - 1) <= 0.06 + 1e-9
+        assert 0.8 <= abs(s.pitch_st) <= 2.0 and abs(s.formant - 1) <= 0.06 and abs(s.pace - 1) <= 0.06 + 1e-9
         n = voices.shift(npc(i, named=True), 0, 0, 0)
-        assert abs(n.pitch_st) <= 3.0 and abs(n.formant - 1) <= 0.05
+        assert abs(n.pitch_st) <= 3.0 and abs(n.formant - 1) <= 0.08
     assert voices.shift(npc(3), 1, 2, 3) == voices.shift(npc(3), 1, 2, 3) != voices.shift(npc(3), 2, 2, 3)
 
 

@@ -200,25 +200,26 @@ Every NPC with dialogue gets a unique NPC Voice, derived automatically from an a
 
 **1. Archetypes.** Every race and gender in the data, plus each Creature Family, has a description (race style guide). `vo prepare` renders several VoxCPM2 voice-design candidates of an anchor line per Archetype, and you pick the one with the right character on the Approval page. A race that needs it (e.g. Undead, the Great Beasts family) also gets an effect chain, applied consistently to every line.
 
-**2. NPC anchor.** Each NPC gets its own anchor, designed by VoxCPM2 from its Archetype's description plus bounded variation:
+**2. NPC anchor.** `vo voices` gives each NPC its own anchor: the approved Archetype anchor, shifted by a small seeded DSP variation (pitch ±0.8–2 semitones, formant up to ±6%, pace up to ±6%; wider for named NPCs). Every line continues from the shifted anchor, so the Archetype's character is kept by construction (ADR-0005). The seed comes from the NPC ID, so rebuilds are deterministic.
 
-- **Base:** role (guard, innkeeper, trainer, noble, bandit), faction, and level band as an age proxy.
-- **Random traits:** pitch, pace, rasp, breathiness, age, and accent strength. The seed is the NPC ID, so rebuilds are deterministic.
+Four candidates are made per NPC. Each must stay close to the Archetype anchor: speaker similarity at or above the ceiling, and pitch and HNR within a band around the anchor's. The one chosen is the closest to the Archetype anchor that still clears the Neighbour floor.
 
-Several candidates are rendered per NPC. The one chosen is the closest to the approved Archetype anchor that still clears the Neighbour floor. (This per-NPC selection is still to be validated by ear in #13; seeds alone gave NPCs that were only barely distinct.)
+The alternative, VoxCPM2 designing each NPC's anchor from the Archetype description plus bounded variation (role, level band as age, seeded pitch, pace, rasp, breathiness, age and accent traits), stays available as `vo voices --strategy design`. It gives more distinct NPCs but lost the orc character in measurement (#13).
 
 **3. Embedding.** Embed each anchor with a speaker-verification model (WavLM-SV) and store it in `voices.embedding`.
 
 **4. Neighbours.** Two NPCs are Neighbours if either holds:
 
 - their spawns are within N yards of each other (tune N; start \~150 yd), or
-- they share a quest chain (`PrevQuestId`/`NextQuestId`, or one starts a quest the other ends).
+- they share a quest chain (`PrevQuestId`/`NextQuestId`/`NextQuestInChain`, or one starts a quest the other ends). Links are direct (a quest and the next one), not a whole chain.
+
+On Core Content at 150 yd there are 21,201 pairs over 2,255 voiced NPCs. That is 18.8 Neighbours per NPC on average (median 14), 6.3 of them from the same Archetype, and 113 NPCs have none. Multi-spawn generics dominate the maximum (Winter Reveler has 743).
 
 No edge weights: spawn proximity already covers hubs and city districts.
 
-**5. Two-sided constraint.** Every NPC Voice must satisfy two checks. Its distance to its **Archetype** must stay below a ceiling, so it still sounds like the voice you approved. Its distance to each **Neighbour** must stay above a single floor, so it sounds distinct. Violations are resolved by re-rolling traits and regenerating the NPC anchor, up to a cap. Anything still failing is listed in the morning report and does not block the run.
+**5. Two-sided constraint.** Every NPC Voice must satisfy two checks. Its distance to its **Archetype** must stay below a ceiling, so it still sounds like the voice you approved. Its distance to each **Neighbour** must stay above a single floor, so it sounds distinct. Violations are resolved by re-rolling traits and regenerating the NPC anchor, up to a cap. Anything still failing is listed in the morning report and does not block the run. It is recorded in `voice_builds` (`vo voices --leftovers`, and the Separation page). An NPC with no candidate that sounds like its Archetype keeps the Archetype anchor. Both thresholds live in `vo.voices.Config`. The floor (0.95, cosine) is provisional until it is calibrated by ear on about 20 pairs from the Separation page.
 
-**6. Named NPCs (automated).** Named and story NPCs (`is_named`) get a wider variation budget, plus prompt hints derived from name, subname and role (e.g. "King" adds regal and measured; "Warchief" adds commanding). They go through the same constraints, with no manual step. A voice prompt can still be pinned through `manual_overrides`. Their clips are surfaced first in the morning report's samples.
+**6. Named NPCs (automated).** Named and story NPCs (`is_named`) get a wider variation budget, plus prompt hints derived from name, subname and role (e.g. "King" adds regal and measured; "Warchief" adds commanding). They go through the same constraints, with no manual step. The name hints apply to the design strategy. A voice prompt can still be pinned through `manual_overrides` (field `voice_prompt`), which designs that NPC's anchor from the pinned text. Their clips are surfaced first in the morning report's samples.
 
 **Narrator.** One fixed voice for quests that start or end at objects and items (wanted posters, quest-starting items). It is excluded from Neighbours.
 

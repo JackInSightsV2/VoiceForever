@@ -10,17 +10,19 @@ For each NPC with lines whose Archetype is in approved_voices.json:
    distinct), and pick the one closest to the Archetype anchor.
 4. None clears: re-roll (next attempt: new traits, new seeds) up to `max_rerolls`. Still none: keep the best
    (passing the gate, least similar to its closest Neighbour) and list the NPC as a leftover in `voice_builds`
-   (status 'leftover', issue + detail) for the morning report. Never blocking.
+   (status 'leftover', issue + detail) for the morning report. Never blocking. If even the best fails the gate, the
+   NPC gets no own voice and keeps speaking with the Archetype anchor.
 
-Strategies (Config.strategy):
+Strategies (Config.strategy), chosen by measurement (ADR-0005):
 - "dsp" (default): the NPC anchor is the Archetype anchor itself, shifted by a small, seeded DSP variation (Praat
-  "Change gender": pitch +-0.8-2 semitones, formant +-1-3.5 %, pace +-6 %). Lines are VoxCPM2 continuations of the
-  shifted anchor. Chosen by measurement (#13, 10 orc_f + 10 human_m NPCs): it keeps the approved anchor's character
-  by construction, gives NPCs more distinct from each other than the design strategy, and renders nothing up
-  front (the anchor is DSP, not a model call).
-- "design": VoxCPM2 designs K candidate anchors from the Archetype description plus bounded variation phrases (role,
-  level band as age, seeded traits: pitch, pace, rasp, breathiness, age, accent strength). More different voices, but
-  a design can lose the Archetype's character (ADR-0004), which the gate only partly catches.
+  "Change gender": pitch +-0.8-2 semitones, formant +-1.8-6 %, pace +-6 %; named NPCs up to 3 st / 8 % / 8 %).
+  Lines are VoxCPM2 continuations of the shifted anchor, which carry the shift (line pitch follows the anchor's,
+  r = 0.86-0.93). It keeps the approved anchor's character by construction and renders nothing up front. Its NPCs are
+  less distinct by speaker embedding (WavLM-SV is mostly blind to pitch; formant drives it).
+- "design" (`vo voices --strategy design`): VoxCPM2 designs K candidate anchors from the Archetype description plus
+  bounded variation phrases (role, level band as age, seeded traits: pitch, pace, rasp, breathiness, age, accent
+  strength). Clearly different voices, but it can lose the Archetype's character: for orc_f, 76 of 80 designs were
+  over 3 semitones above the approved anchor. Workable for plain voices (human_m: 7 of 10 NPCs cleared the gate).
 An NPC whose voice prompt is pinned through `manual_overrides` (field `voice_prompt`) always uses "design", with the
 pinned text as its variation.
 
@@ -32,8 +34,9 @@ voice given the same Neighbour voices. NPCs are built in id order. A dashboard r
 `reroll-voice`, from the Separation page) bumps the NPC's roll and rebuilds it. A voice whose Archetype anchor has
 changed since it was built is rebuilt too.
 
-Thresholds are in Config. The floor is provisional: calibrate it by ear on ~20 Neighbour pairs from the Separation
-page (pairs just under and just over it), then set it here.
+Thresholds are in Config. The floor is provisional (set so that most dsp NPCs clear it: 14 of 20 on a first real
+build): calibrate it by ear on ~20 Neighbour pairs from the Separation page (pairs just under and just over it),
+then set it here.
 
 Audio: build/voices/<archetype>/<npc>-r<roll>a<attempt>k<k>.wav. Voice id:
 `voxcpm:<archetype>@<candidate>#<npc>-r<roll>a<attempt>k<k>` (see voxcpm.Backend).
@@ -66,10 +69,10 @@ class Config:
     candidates: int = 4
     # Archetype ceiling: min cosine (WavLM-SV) of an NPC anchor to its Archetype anchor. Below it, the NPC no longer
     # sounds like the approved voice.
-    ceiling: float = 0.75
+    ceiling: float = 0.80
     # Neighbour floor: max cosine of an NPC anchor to any Neighbour's anchor. Above it, the two sound alike.
     # Provisional: calibrate by ear on ~20 pairs from the Separation page.
-    floor: float = 0.90
+    floor: float = 0.95
     max_rerolls: int = 3
     f0_band_st: float = 3.0
     hnr_band_db: float = 5.0
@@ -237,8 +240,8 @@ class Shift:
 
 
 # Bounds: (min |pitch| st, max |pitch| st, max |formant - 1|, max |pace - 1|).
-SHIFT_BOUNDS = (0.8, 2.0, 0.035, 0.06)
-SHIFT_BOUNDS_NAMED = (0.8, 3.0, 0.05, 0.08)
+SHIFT_BOUNDS = (0.8, 2.0, 0.06, 0.06)
+SHIFT_BOUNDS_NAMED = (0.8, 3.0, 0.08, 0.08)
 
 
 def shift(npc: Npc, roll: int, attempt: int, k: int) -> Shift:
