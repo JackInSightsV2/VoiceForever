@@ -3,6 +3,7 @@ import type { Database } from "bun:sqlite";
 import { LEXICON_ACTIONS, LexiconActionError, validateLexiconAction } from "./lexicon";
 import { APPROVAL_ACTIONS, runState } from "./queries";
 import { SEPARATION_ACTIONS, validateSeparation } from "./separation";
+import { RATING_ACTIONS, validateRating } from "./spotcheck";
 
 export const LINE_ACTIONS = ["retry-line", "skip-line", "edit-tts-text"] as const;
 export const RUN_ACTIONS = ["pause-run", "resume-run", "set-until"] as const;
@@ -100,7 +101,11 @@ export function validate(read: Database, req: ActionRequest, now: Date = new Dat
       throw e;
     }
   }
-  // Separation page: re-roll an NPC Voice, consumed by `vo voices`.
+  // Spot-check and NPC browser: ratings and flags, folded into `ratings` by vo run / vo voices (vo.ratings).
+  if ((RATING_ACTIONS as readonly string[]).includes(action)) {
+    return validateRating(read, action, req.target, payload as Record<string, unknown>);
+  }
+  // Separation page and NPC browser: re-roll an NPC Voice, consumed by `vo voices`.
   if ((SEPARATION_ACTIONS as readonly string[]).includes(action)) return validateSeparation(read, action, req.target);
 
   throw new ActionError(`unknown action ${JSON.stringify(action)}`);

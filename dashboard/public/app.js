@@ -10,12 +10,6 @@ const PAGES = {
   "/spot-check": "spot-check",
   "/separation": "separation",
 };
-const SOON = {
-  coverage: "Per-zone and per-Voice-Pack completion, drilling down to NPCs.",
-  npcs: "Search NPCs; each with its voice, reference clip and every line.",
-  "spot-check": "Keyboard-driven random line player with ratings.",
-  separation: "Closest same-race Neighbour pairs, side by side.",
-};
 const STATUS_ORDER = ["done", "running", "pending", "quarantined", "skipped"];
 
 const $ = (s) => document.querySelector(s);
@@ -70,10 +64,15 @@ async function act(action, target, payload) {
   return true;
 }
 
+// The API behind this page, with its query (coverage drill-down, NPC search or one NPC).
+const apiUrl = () =>
+  page === "npcs" && params.get("id") ? `/api/npc?id=${encodeURIComponent(params.get("id"))}` : `/api/${page}${location.search}`;
+
 async function refresh() {
-  if (!(page in RENDER)) return;
-  const res = await fetch(`/api/${page}`);
+  if (!(page in RENDER) || page === "spot-check") return; // spot-check moves on with N, not with refreshes
+  const res = await fetch(apiUrl());
   if (res.ok) show(await res.json());
+  else if (res.status === 404) show({ error: "not found" });
 }
 
 // --- Overview ---------------------------------------------------------------------------------------------------
@@ -195,6 +194,35 @@ function renderOverview(d) {
       }
     </section>
 
+    <section class="card">
+      <h2>Morning report</h2>
+      ${
+        d.reports.latest
+          ? `<p><a class="btn primary" href="${esc(d.reports.latest)}" target="_blank" rel="noopener">Open the latest report</a></p>
+             <p class="muted small">Written by every <span class=mono>vo run</span> as it ends: progress, coverage, quarantine,
+             separation leftovers, Drift and new Capture, sample clips. Nothing in it needs action.</p>
+             ${d.reports.runs.length ? `<div class="reports">${d.reports.runs.map((r) => `<a href="${esc(r.url)}" target="_blank" rel="noopener">run #${r.run}</a>`).join("")}</div>` : ""}`
+          : `<div class=empty>No report yet: every <span class=mono>vo run</span> writes one as it ends (or <span class=mono>vo report</span>).</div>`
+      }
+    </section>
+
+    <section class="card">
+      <h2>Spot-checked by zone</h2>
+      ${
+        d.zones.length
+          ? `<div class="scroll tall"><table><thead><tr><th>Zone</th><th class=num>Done</th><th class=num>Checked</th><th></th></tr></thead><tbody>
+             ${d.zones
+               .map(
+                 (z) => `<tr><td><a href="/coverage?zone=${z.zone ?? "none"}">${esc(z.name)}</a></td>
+                 <td class=num>${fmt(z.done)} / ${fmt(z.total)}</td><td class="num ${z.done && !z.checked ? "muted" : ""}">${fmt(z.checked)}</td>
+                 <td>${meter(z.done ? (100 * z.checked) / z.done : 0)}</td></tr>`,
+               )
+               .join("")}</tbody></table></div>
+             <p class="muted small">Checked: lines rated or flagged on <a href="/spot-check">Spot-check</a>, against lines done. The bar is the share of done lines checked.</p>`
+          : `<div class=empty>No lines yet.</div>`
+      }
+    </section>
+
     <section class="card wide">
       <h2>Run history</h2>
       ${
@@ -219,6 +247,8 @@ function renderOverview(d) {
     }),
   );
 }
+
+const meter = (pct) => `<span class="meter" title="${fmt(pct, 1)}%"><i style="width:${Math.min(100, Math.max(0, pct)).toFixed(1)}%"></i></span>`;
 
 // --- Quarantine -------------------------------------------------------------------------------------------------
 
@@ -566,17 +596,291 @@ function renderSeparation(d) {
   );
 }
 
-// --- Coming pages -----------------------------------------------------------------------------------------------
+// --- Coverage ---------------------------------------------------------------------------------------------------
 
-function renderSoon() {
-  const name = document.querySelector(`nav a[data-page="${page}"]`).textContent;
-  main.innerHTML = `<div class="card soon-page"><h1>${esc(name)}</h1><p>${esc(SOON[page])}</p><p>Coming in #14.</p></div>`;
+const params = new URLSearchParams(location.search);
+
+function covTable(rows, label, key) {
+  if (!rows.length) return `<div class=empty>No lines yet.</div>`;
+  const tot = rows.reduce(
+    (a, r) => ({ total: a.total + r.total, done: a.done + r.done, failed: a.failed + r.failed, quarantined: a.quarantined + r.quarantined, checked: a.checked + r.checked }),
+    { total: 0, done: 0, failed: 0, quarantined: 0, checked: 0 },
+  );
+  const row = (r, name) => `<tr><td>${name}</td><td class=num>${fmt(r.total)}</td><td class=num>${fmt(r.done)}</td>
+    <td class="num ${r.failed ? "warn" : ""}">${fmt(r.failed)}</td><td class="num ${r.quarantined ? "bad" : ""}">${fmt(r.quarantined)}</td>
+    <td class=num>${fmt(r.total ? (100 * r.done) / r.total : 0, 1)}% ${meter(r.total ? (100 * r.done) / r.total : 0)}</td><td class=num>${fmt(r.checked)}</td></tr>`;
+  return `<div class=scroll><table class="cov"><thead><tr><th>${label}</th><th class=num>Lines</th><th class=num>Done</th><th class=num>Failed</th>
+    <th class=num>Quarantined</th><th class=num>Complete</th><th class=num>Spot-checked</th></tr></thead>
+    <tbody>${rows.map((r) => row(r, key(r))).join("")}</tbody><tfoot>${row(tot, "<b>All</b>")}</tfoot></table></div>`;
 }
+
+function renderCoverage(d) {
+  if (d.zone) {
+    const z = d.zone;
+    main.innerHTML = `<h1><a href="/coverage">Coverage</a> <span class="muted">/</span> ${esc(z.name)}</h1>
+    <p class="muted">This zone's lines by NPC (an NPC counts in its main spawn zone). Open an NPC for its voice and every line.</p>
+    <section class="card">${covTable(z.npcs, "NPC", (n) =>
+      n.npc_id == null
+        ? "Narrator <span class=muted>(object and item quests)</span>"
+        : `<a href="/npcs?id=${n.npc_id}">${esc(n.name || `NPC ${n.npc_id}`)}</a>${n.subname ? ` <span class="muted">&lt;${esc(n.subname)}&gt;</span>` : ""}
+           <span class="muted small">${esc([n.race, n.gender, n.role].filter(Boolean).join(" · "))}</span>`,
+    )}</section>`;
+    return;
+  }
+  main.innerHTML = `<h1>Coverage</h1>
+  <p class="muted">Failed: a take failed and waits for its retry. Quarantined: failed every take of a run (retried by the next run).
+  Spot-checked: rated or flagged on <a href="/spot-check">Spot-check</a>. Open a zone for its NPCs.</p>
+  ${d.assigned ? "" : `<div class="card warnbox">Zones are named and Voice Packs assigned by <span class=mono>vo extract --all</span>, <span class=mono>vo package</span> or <span class=mono>vo run</span> with the world DB; until then lines count under their NPC's zone id and "Unassigned".</div>`}
+  <section class="card"><h2>By zone</h2>${covTable(d.zones, "Zone", (r) => `<a href="/coverage?zone=${r.zone ?? "none"}">${esc(r.name)}</a>`)}</section>
+  <section class="card" style="margin-top:16px"><h2>By Voice Pack</h2>${covTable(d.packs, "Voice Pack", (r) => `<span class=mono>${esc(r.pack)}</span>`)}</section>`;
+}
+
+// --- NPC browser ------------------------------------------------------------------------------------------------
+
+const STATUS_TAG = { done: "ok", quarantined: "bad", skipped: "", pending: "", running: "", unqueued: "" };
+let npcForm = null; // the search form survives live results
+
+function renderNpcs(d) {
+  if (params.get("id")) return renderNpc(d);
+  if (!npcForm) {
+    const f = d.facets;
+    const opt = (xs, cur, label = (x) => x, val = (x) => x) =>
+      xs.map((x) => `<option value="${esc(val(x))}" ${String(val(x)) === cur ? "selected" : ""}>${esc(label(x))}</option>`).join("");
+    main.innerHTML = `<h1>NPC browser</h1>
+    <form class="card search" id="npc-search" autocomplete="off">
+      <input type="search" name="q" placeholder="Name, title or id" value="${esc(params.get("q") || "")}" aria-label="Name">
+      <select name="zone" aria-label="Zone"><option value="">Any zone</option><option value="none" ${params.get("zone") === "none" ? "selected" : ""}>No zone</option>${opt(f.zones, params.get("zone") || "", (z) => z.name, (z) => z.id)}</select>
+      <select name="race" aria-label="Race"><option value="">Any race</option>${opt(f.races, params.get("race") || "")}</select>
+      <select name="archetype" aria-label="Archetype"><option value="">Any Archetype</option>${opt(f.archetypes, params.get("archetype") || "")}</select>
+      <select name="role" aria-label="Role"><option value="">Any role</option>${opt(f.roles, params.get("role") || "")}</select>
+    </form>
+    <div id="npc-results"></div>`;
+    npcForm = $("#npc-search");
+    let t;
+    const search = () => {
+      const q = new URLSearchParams([...new FormData(npcForm)].filter(([, v]) => v !== ""));
+      history.replaceState(null, "", `/npcs${q.toString() ? `?${q}` : ""}`);
+      for (const k of [...params.keys()]) params.delete(k);
+      q.forEach((v, k) => params.set(k, v));
+      refresh();
+    };
+    npcForm.addEventListener("input", () => (clearTimeout(t), (t = setTimeout(search, 250))));
+    npcForm.addEventListener("submit", (e) => (e.preventDefault(), search()));
+  }
+  $("#npc-results").innerHTML = d.npcs.length
+    ? `<p class="muted small">${fmt(d.total)} NPC${d.total === 1 ? "" : "s"}${d.total > d.npcs.length ? `, first ${d.npcs.length} shown` : ""}.</p>
+      <section class="card scroll"><table><thead><tr><th>NPC</th><th>Race</th><th>Archetype</th><th>Zone</th><th>Role</th><th class=num>Lines done</th><th>Voice</th></tr></thead><tbody>
+      ${d.npcs
+        .map(
+          (n) => `<tr><td><a href="/npcs?id=${n.id}"><b>${esc(n.name || `NPC ${n.id}`)}</b></a>${n.subname ? ` <span class="muted">&lt;${esc(n.subname)}&gt;</span>` : ""}
+          <span class="mono muted">${n.id}</span></td><td>${esc([n.race, n.gender].filter(Boolean).join(" "))}</td>
+          <td class=mono>${esc(n.archetype || "–")}</td><td>${esc(n.zone_name)}</td><td>${esc(n.role || "")}</td>
+          <td class=num>${fmt(n.done)} / ${fmt(n.lines)}${n.quarantined ? ` <span class=bad>(${n.quarantined} q)</span>` : ""}</td>
+          <td>${n.own_voice ? `<span class="tag ${n.build_status === "leftover" ? "bad" : "ok"}">${n.build_status === "leftover" ? "leftover" : "own"}</span>` : `<span class="tag">Archetype</span>`}</td></tr>`,
+        )
+        .join("")}</tbody></table></section>`
+    : `<div class="card empty">No NPCs match.</div>`;
+}
+
+function renderNpc(d) {
+  if (d.error) {
+    main.innerHTML = `<h1><a href="/npcs">NPC browser</a></h1><div class="card empty">No NPC ${esc(params.get("id"))}.</div>`;
+    return;
+  }
+  const n = d.npc;
+  const v = d.voice;
+  const r = v.ratings;
+  const queuedVoice = d.queued.map((a) => `<span class="queued">queued: ${esc(a)}</span>`).join("");
+  const anchor = v.own
+    ? `<div class="sample"><div class="slabel"><span class="muted">NPC anchor</span><span class="stext" title="${esc(v.prompt || "")}">${esc(v.prompt || "")}</span></div>
+       ${v.anchor_url ? `<audio controls preload="none" src="${esc(v.anchor_url)}"></audio>` : `<span class="muted">anchor file missing</span>`}</div>`
+    : `<div class="sample"><div class="slabel"><span class="muted">Archetype anchor${v.archetype ? ` · ${esc(v.archetype.label)}` : ""}</span>
+       <span class="stext">No NPC Voice yet: speaks with its Archetype's anchor until <span class=mono>vo voices</span> builds one.</span></div>
+       ${v.archetype?.anchor_url ? `<audio controls preload="none" src="${esc(v.archetype.anchor_url)}"></audio>` : `<span class="muted">${v.archetype?.approved ? "anchor file missing" : "Archetype not approved yet"}</span>`}</div>`;
+  const b = v.build;
+  main.innerHTML = `<h1><a href="/npcs">NPC browser</a> <span class="muted">/</span> ${esc(n.name || `NPC ${n.id}`)}${n.subname ? ` <span class="muted">&lt;${esc(n.subname)}&gt;</span>` : ""}</h1>
+  <section class="card">
+    <div class="ahead"><span class="mono muted">${n.id}</span>
+      ${n.race || n.gender ? `<span class="tag">${esc([n.race, n.gender].filter(Boolean).join(" "))}</span>` : ""}
+      ${n.archetype ? `<span class="tag mono">${esc(n.archetype)}</span>` : ""}
+      ${n.role ? `<span class="tag">${esc(n.role)}</span>` : ""}${n.is_named ? `<span class="tag">named</span>` : ""}
+      ${n.source !== "core" ? `<span class="tag">${esc(n.source)}</span>` : ""}
+      <span class="muted">${n.zones.map((z) => `<a href="/coverage?zone=${z.zone}">${esc(z.name)}</a>`).join(", ") || "no spawns"}</span></div>
+    ${d.issues.length ? `<div class="small warn">${d.issues.map((i) => `${esc(i.issue)}: ${esc(i.detail || "")}`).join(" · ")}</div>` : ""}
+    <div class="voice">
+      ${anchor}
+      <div class="muted small"><span class="mono">${esc(v.voice_id || "no voice yet")}</span>${b ? ` · roll ${b.roll} · ${esc(b.strategy || "")} · ${esc(b.status || "")}${b.issue ? ` (${esc(b.detail || b.issue)})` : ""}` : ""}</div>
+      <div class="muted small">Ratings in this voice: <b>${r.up}</b> up · <b class="${r.down ? "bad" : ""}">${r.down}</b> down · ${r.flags} flag${r.flags === 1 ? "" : "s"}${v.flags.length ? ` (${v.flags.map((f) => esc(f.note || "no note")).join("; ")})` : ""}</div>
+      <div class="qactions">${queuedVoice}
+        <button data-a="flag-voice">Flag voice</button>
+        <button data-a="reroll" ${v.can_reroll ? "" : `disabled title="No NPC Voice to re-roll yet: vo voices builds it"`}>Regenerate voice</button>
+      </div>
+    </div>
+  </section>
+  <h2 style="margin-top:20px">Lines (${d.lines.length})</h2>
+  <div class="q">${d.lines.map(npcLine).join("")}</div>`;
+  main.querySelector('[data-a="flag-voice"]').addEventListener("click", () => {
+    const note = prompt(`Flag ${n.name}'s voice. Note (optional):`, "");
+    if (note !== null) act("flag-voice", n.id, { voice_id: v.voice_id || undefined, note });
+  });
+  main.querySelector('[data-a="reroll"]').addEventListener("click", () => {
+    if (confirm(`Re-roll ${n.name}'s voice? vo voices builds a new one; vo run then re-renders its lines.`)) act("reroll-voice", n.id);
+  });
+  main.querySelectorAll("[data-retry]").forEach((btn) =>
+    btn.addEventListener("click", () => act("retry-line", Number(btn.dataset.retry), { voice_id: btn.dataset.voice })),
+  );
+}
+
+function npcLine(l) {
+  return `<article class="qline">
+    <div class="qhead"><span class="tag ${STATUS_TAG[l.status] ?? ""}">${esc(l.status)}</span><span class="tag">${esc(l.type)}</span>
+      ${l.quest_id ? `<span class="tag">quest ${l.quest_id}</span>` : ""}${l.player_gender ? `<span class="tag">player ${esc(l.player_gender)}</span>` : ""}
+      <span class="muted mono">line ${l.line_id}</span>
+      ${l.wer != null ? `<span class="${l.wer > 0.15 ? "bad" : "muted"}" title="ASR heard: ${esc(l.transcript || "")}">WER ${fmt(l.wer, 2)}</span>` : ""}
+      ${l.rating ? `<span class="tag ${l.rating === "down" ? "bad" : "ok"}">rated ${esc(l.rating)}</span>` : ""}
+      ${l.flags.map((f) => `<span class="tag bad" title="${esc(f || "")}">flagged</span>`).join("")}
+      <span class="muted" style="margin-left:auto">${l.tries ? `${fmt(l.tries)} take${l.tries === 1 ? "" : "s"} · ` : ""}${when(l.updated_at)}</span></div>
+    ${l.reason && l.status !== "done" ? `<div class="reason">${esc(l.reason)}</div>` : ""}
+    <div class="qtext">${esc(l.tts_text || l.raw_text)}</div>
+    <div class="qactions">
+      ${l.audio_url ? `<audio controls preload="none" src="${esc(l.audio_url)}"></audio>${l.audio_status === "stale" ? `<span class="muted">stale take</span>` : ""}` : `<span class="muted">not voiced yet</span>`}
+      <span style="flex:1"></span>
+      ${l.queued.map((a) => `<span class="queued">queued: ${esc(a)}</span>`).join("")}
+      ${l.voice_id ? `<button data-retry="${l.line_id}" data-voice="${esc(l.voice_id)}" ${l.status === "running" ? "disabled" : ""}>Regenerate line</button>` : ""}
+    </div>
+  </article>`;
+}
+
+// --- Spot-check -------------------------------------------------------------------------------------------------
+
+const seen = []; // line ids played this session: not offered again
+let spot = null; // the current snapshot
+let autoNext = true;
+try {
+  autoNext = localStorage.getItem("vo.spot.autoNext") !== "0";
+} catch {}
+
+async function nextSpot(play = true) {
+  const res = await fetch(`/api/spot-check?exclude=${seen.slice(-500).join(",")}`);
+  if (!res.ok) return toast(`Failed: ${res.status}`);
+  spot = await res.json();
+  if (spot.line) seen.push(spot.line.line_id);
+  renderSpot(spot);
+  const a = main.querySelector("audio");
+  if (play && a) a.play().catch(() => {});
+}
+
+function renderSpot(d) {
+  const s = d.stats;
+  const l = d.line;
+  const head = `<h1>Spot-check</h1>
+  <p class="muted">A random voiced line, weighted toward new lines, named NPCs and low ASR scores. <kbd>Space</kbd> plays,
+  <kbd>J</kbd> thumbs up, <kbd>K</kbd> thumbs down, <kbd>N</kbd> next, <kbd>F</kbd> flag. ${REROLL_DOWNS} lines rated down in
+  one NPC Voice queue a re-roll (applied by <span class=mono>vo voices</span>).</p>
+  <div class="legend spotstats"><span>voiced <b>${fmt(s.voiced)}</b></span><span>checked <b>${fmt(s.checked)}</b></span>
+    <span>up <b>${fmt(s.up)}</b></span><span>down <b>${fmt(s.down)}</b></span><span>flags <b>${fmt(s.flags)}</b></span>
+    <label><input type="checkbox" id="auto-next" ${autoNext ? "checked" : ""}> next after rating</label></div>`;
+  if (!l) {
+    main.innerHTML = `${head}<div class="card empty">${seen.length ? "You've heard every voiced line this session." : "No voiced lines yet: vo run renders them."}</div>`;
+  } else {
+    const who = l.npc ? `<a href="/npcs?id=${l.npc_id}">${esc(l.npc)}</a>` : "Narrator";
+    main.innerHTML = `${head}
+    <section class="card spot">
+      <div class="ahead"><b class="who">${who}</b>${l.subname ? `<span class="muted">&lt;${esc(l.subname)}&gt;</span>` : ""}
+        ${l.race ? `<span class="tag">${esc(l.race)} ${esc(l.gender || "")}</span>` : ""}
+        <span class="tag">${esc(l.zone_name)}</span><span class="tag">${esc(l.type)}</span>
+        ${l.why.map((w) => `<span class="tag why">${esc(w)}</span>`).join("")}
+        <span class="muted mono">line ${l.line_id}</span></div>
+      <div class="spot-text">${esc(l.tts_text)}</div>
+      <audio controls preload="auto" src="${esc(l.audio_url)}"></audio>
+      ${l.transcript ? `<div class="muted small">ASR heard: <i>${esc(l.transcript)}</i>${l.wer != null ? ` · WER ${fmt(l.wer, 2)}` : ""}</div>` : ""}
+      <div class="muted small"><span class="mono">${esc(l.voice_id)}</span> · this voice: ${l.voice.up} up, <span class="${l.voice.down ? "bad" : ""}">${l.voice.down} down</span>, ${l.voice.flags} flags
+        ${l.own_voice ? "" : " · an Archetype anchor (shared): never auto re-rolled"}</div>
+      ${l.rated ? `<div><span class="tag ${l.rated === "down" ? "bad" : "ok"}">rated ${esc(l.rated)}</span></div>` : ""}
+      <div class="spot-keys">
+        <button data-k="space" title="Space">Play <kbd>Space</kbd></button>
+        <button data-k="j" class="${l.rated === "up" ? "on" : ""}">Thumbs up <kbd>J</kbd></button>
+        <button data-k="k" class="${l.rated === "down" ? "on" : ""}">Thumbs down <kbd>K</kbd></button>
+        <button data-k="f">Flag <kbd>F</kbd></button>
+        <button data-k="n" class="primary">Next <kbd>N</kbd></button>
+      </div>
+      <input id="flag-note" class="note-input" placeholder="Flag note (optional), then F or Enter" maxlength="500">
+    </section>`;
+  }
+  $("#auto-next")?.addEventListener("change", (e) => {
+    autoNext = e.target.checked;
+    try {
+      localStorage.setItem("vo.spot.autoNext", autoNext ? "1" : "0");
+    } catch {}
+  });
+  main.querySelectorAll("[data-k]").forEach((b) => b.addEventListener("click", () => (b.blur(), spotKey(b.dataset.k))));
+  $("#flag-note")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") (e.preventDefault(), spotKey("f"));
+    if (e.key === "Escape") e.target.blur();
+  });
+}
+
+async function spotKey(k) {
+  const l = spot?.line;
+  if (k === "n") return nextSpot();
+  if (!l) return;
+  if (k === "space") {
+    const a = main.querySelector("audio");
+    if (a) a.paused ? a.play().catch(() => {}) : a.pause();
+    return;
+  }
+  if (k === "j" || k === "k") {
+    const ok = await postQuiet("rate-line", l.line_id, { voice_id: l.voice_id, rating: k === "j" ? "up" : "down" });
+    if (!ok) return;
+    toast(`Rated ${k === "j" ? "up" : "down"}${k === "k" && l.own_voice && l.voice.down + 1 >= REROLL_DOWNS ? `: ${REROLL_DOWNS} down, a re-roll will be queued` : ""}`);
+    if (autoNext) return nextSpot();
+    l.rated = k === "j" ? "up" : "down";
+    renderSpot(spot);
+  }
+  if (k === "f") {
+    const input = $("#flag-note");
+    const ok = await postQuiet("flag-line", l.line_id, { voice_id: l.voice_id, note: input?.value || "" });
+    if (!ok) return;
+    toast("Flagged");
+    if (input) input.value = "";
+    if (autoNext) return nextSpot();
+  }
+}
+
+/** POST an action without the page refresh `act` does (the player keeps its place). */
+async function postQuiet(action, target, payload) {
+  const res = await fetch("/api/actions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action, target, payload }),
+  });
+  if (res.ok) return true;
+  const body = await res.json().catch(() => ({}));
+  toast(`Failed: ${body.error || res.status}`);
+  return false;
+}
+
+const REROLL_DOWNS = 3; // vo.ratings.REROLL_DOWNS
+
+document.addEventListener("keydown", (e) => {
+  if (page !== "spot-check" || e.metaKey || e.ctrlKey || e.altKey) return;
+  const tag = document.activeElement?.tagName;
+  if (tag === "INPUT" && document.activeElement.type !== "checkbox") return;
+  if (tag === "TEXTAREA") return;
+  const k = e.key === " " ? "space" : e.key.toLowerCase();
+  if (!["space", "j", "k", "n", "f"].includes(k)) return;
+  e.preventDefault();
+  spotKey(k);
+});
 
 // --- Live updates -----------------------------------------------------------------------------------------------
 
-const RENDER = { overview: renderOverview, quarantine: renderQuarantine, approval: renderApproval, separation: renderSeparation };
-const LISTENING = new Set(["approval", "separation"]); // pages for listening: live updates wait for the player
+const RENDER = {
+  overview: renderOverview, quarantine: renderQuarantine, approval: renderApproval, separation: renderSeparation,
+  coverage: renderCoverage, npcs: renderNpcs, "spot-check": renderSpot,
+};
+const LISTENING = new Set(["approval", "separation", "npcs"]); // pages for listening: updates wait for the player
+const LIVE = new Set(["overview", "quarantine", "approval", "separation", "coverage"]); // SSE; the others load on demand
 let pending = null;
 let lastSnapshot = null;
 
@@ -603,7 +907,7 @@ document.addEventListener("pause", () => pending && LISTENING.has(page) && show(
 
 function connect() {
   const live = $("#live");
-  const es = new EventSource(`/events?page=${page}`);
+  const es = new EventSource(`/events?page=${page}${location.search ? `&${location.search.slice(1)}` : ""}`);
   es.addEventListener(page, (e) => {
     live.className = "live ok";
     live.lastChild.textContent = `live · ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
@@ -616,7 +920,11 @@ function connect() {
 }
 
 document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("on", a.dataset.page === page));
-if (RENDER[page]) connect();
-else renderSoon();
+if (LIVE.has(page)) connect();
+else {
+  $("#live").lastChild.textContent = "on demand";
+  if (page === "spot-check") nextSpot(false);
+  else refresh();
+}
 if (page !== "quarantine") fetch("/api/quarantine").then((r) => r.json()).then((d) => ($("#nav-q").textContent = d.lines.length || ""));
 if (page !== "approval") fetch("/api/approval").then((r) => r.json()).then((d) => ($("#nav-a").textContent = approvalOpen(d) || ""));

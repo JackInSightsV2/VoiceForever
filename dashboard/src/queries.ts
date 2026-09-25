@@ -1,7 +1,8 @@
 // Read side: page snapshots built from the pipeline's SQLite. Every function takes a (read-only) Database.
 import type { Database } from "bun:sqlite";
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
+import { zoneRows } from "./coverage";
 import { lexiconSnapshot } from "./lexicon";
 import { localIso, parseLocal, secondsBetween } from "./time";
 
@@ -75,7 +76,19 @@ export function throughput(db: Database, from: Date, to: Date) {
   };
 }
 
-export function overview(db: Database, now: Date = new Date()) {
+/** Morning reports (vo run writes <run id>.html and latest.html), newest first, served under /reports/. */
+export function reportList(reportsRoot: string | undefined, limit = 10) {
+  if (!reportsRoot || !existsSync(reportsRoot)) return { latest: null, runs: [] as { run: number; url: string; at: string }[] };
+  const runs = readdirSync(reportsRoot)
+    .map((f) => /^(\d+)\.html$/.exec(f))
+    .filter((m): m is RegExpExecArray => m !== null)
+    .map((m) => ({ run: Number(m[1]), url: `/reports/${m[0]}`, at: localIso(statSync(join(reportsRoot, m[0])).mtime) }))
+    .sort((a, b) => b.run - a.run)
+    .slice(0, limit);
+  return { latest: existsSync(join(reportsRoot, "latest.html")) ? "/reports/latest.html" : null, runs };
+}
+
+export function overview(db: Database, now: Date = new Date(), reportsRoot?: string) {
   const { state, run } = runState(db, now);
   const counts = jobCounts(db);
   const live = state === "running" || state === "paused";
@@ -135,6 +148,9 @@ export function overview(db: Database, now: Date = new Date()) {
     history,
     queued_actions: queued,
     run_errors: history.filter((r) => r.error).map((r) => ({ run: r.id, at: r.ended_at, error: r.error })),
+    // The morning report's view: coverage and spot-checked lines per zone (where you haven't listened yet).
+    zones: zoneRows(db).map(({ zone, name, total, done, checked, pct }) => ({ zone, name, total, done, checked, pct })),
+    reports: reportList(reportsRoot),
   };
 }
 
