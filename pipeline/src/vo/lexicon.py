@@ -254,10 +254,23 @@ class Lexicon:
         self._re = self._back = None
 
     def _compiled(self) -> re.Pattern | None:
+        """One pass over the text: a multiword name (few; an alternation), else any word (looked up by key)."""
         if self._re is None and self.spellings:
-            alts = "|".join(_pattern(self._written[k]) for k in sorted(self.spellings, key=lambda k: (-len(k), k)))
-            self._re = re.compile(rf"(?<![\w'’])({alts})(?=(?:s|['’]s|s['’]|['’])?(?![\w'’]))", re.I)
+            multi = sorted((k for k in self.spellings if " " in k), key=lambda k: (-len(k), k))
+            head = (f"(?i:({'|'.join(_pattern(self._written[k]) for k in multi)})"
+                    rf"(?=(?:s|['’]s|s['’]|['’])?(?![\w'’])))|") if multi else ""
+            self._re = re.compile(rf"(?<![\w'’])(?:{head}([A-Za-z]+(?:['’][A-Za-z]+)*)(?![\w]))")
         return self._re
+
+    def _lookup(self, word: str) -> str | None:
+        """A word's respelling, keeping a possessive or plural ending: Kel'Thuzad's, Barovs."""
+        k = key(word)
+        if k in self.spellings:
+            return self.spellings[k]
+        for end in ("'s", "s"):
+            if k.endswith(end) and k[:-len(end)] in self.spellings:
+                return self.spellings[k[:-len(end)]] + word[-len(end):]
+        return None
 
     def __call__(self, s: str) -> str:
         pattern = self._compiled()
@@ -265,9 +278,13 @@ class Lexicon:
             return s
 
         def repl(m: re.Match) -> str:
-            if not m[1][0].isupper():
+            multi = m.lastindex == 1 and len(m.groups()) == 2
+            found = m[1] if multi else m[m.lastindex]
+            if not found[0].isupper():
                 return m[0]
-            return self.spellings[key(re.sub(r"\s+", " ", m[1]))]
+            if multi:
+                return self.spellings[key(re.sub(r"\s+", " ", found))]
+            return self._lookup(found) or found
         return pattern.sub(repl, s)
 
     def pairs(self, spoken: str) -> list[tuple[str, str]]:
