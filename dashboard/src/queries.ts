@@ -248,11 +248,13 @@ export function approval(db: Database, candidatesRoot: string) {
     out.push({
       id: a.id, label: a.label, kind: a.kind, gender: a.gender, races: parseJson(a.races, {}), npcs: a.npcs, lines: a.lines,
       base_description: a.base_description, notes: parseJson(a.notes, []), description: a.description,
-      anchor_text: a.anchor_text, mode: a.mode, effect_chain: a.effect_chain, generation: a.generation,
+      anchor_text: a.anchor_text, mode: a.mode, effect_chain: a.effect_chain, anchor_chain: a.anchor_chain ?? null,
+      generation: a.generation,
       approved: a.approved, approved_at: a.approved_at,
       superseded: mine.length - current.length,
       candidates: current.map((c) => ({
         id: c.id, seed: c.seed, generation: c.generation, status: c.status, url: url(c.path), duration_s: c.duration_s,
+        label: c.label ?? null, anchor_chain: c.anchor_chain ?? null, raw_url: url(c.raw_path ?? null),
         f0: c.f0, hnr: c.hnr, centroid: c.centroid, asr: c.asr, wer: c.wer, samples: samplesBy.get(c.id) ?? [],
       })),
       queued: queuedFor(a.id),

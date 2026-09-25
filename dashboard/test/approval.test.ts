@@ -75,6 +75,27 @@ describe("approval snapshot", () => {
     expect(orc.races).toEqual({ "Orc female": 48 });
   });
 
+  test("bake-off seeds show their label, anchor chain and the clip before the chain", () => {
+    const fx = approvalFixture();
+    fx.db.run("UPDATE archetypes SET anchor_chain = 'orc' WHERE id = 'troll_m'");
+    const raw = join(fx.cands, "troll_m/bakeoff/r4-s6-orc_raw.wav");
+    mkdirSync(join(raw, ".."), { recursive: true });
+    writeFileSync(raw, "RIFF");
+    writeFileSync(join(fx.cands, "troll_m/bakeoff/r4-s6-orc.wav"), "RIFF");
+    fx.db.run(
+      `INSERT INTO candidates (id, archetype, generation, seed, path, raw_path, anchor_chain, label, status)
+       VALUES ('troll_m/r4-s6-orc', 'troll_m', 1, 6, ?, ?, 'orc', 'r4-s6 + orc chain (bake-off winner)', 'pending')`,
+      [join(fx.cands, "troll_m/bakeoff/r4-s6-orc.wav"), raw],
+    );
+    const troll = approval(fx.db, fx.cands).archetypes[0];
+    expect(troll.anchor_chain).toBe("orc");
+    expect(troll.candidates.find((c: any) => c.id === "troll_m/r4-s6-orc")).toMatchObject({
+      label: "r4-s6 + orc chain (bake-off winner)", anchor_chain: "orc", url: "/candidates/troll_m/bakeoff/r4-s6-orc.wav",
+      raw_url: "/candidates/troll_m/bakeoff/r4-s6-orc_raw.wav",
+    });
+    expect(troll.candidates.find((c: any) => c.id === "troll_m/g1s0")).toMatchObject({ label: null, anchor_chain: null, raw_url: null });
+  });
+
   test("queued actions show on their Archetype until vo prepare consumes them", () => {
     const fx = approvalFixture();
     const ro = new Database(fx.path, { readonly: true });

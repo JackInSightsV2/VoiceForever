@@ -15,8 +15,9 @@ Mapping decisions for labels that are neither a playable race nor an obvious cre
 
 The style guide (STYLE) holds each Archetype's VoxCPM2 voice-design description and the anchor line its Candidates
 read. The bake-off (#10) winners are kept verbatim: human_m, human_f, orc_f, troll_m, troll_f (round 2), dwarf_f
-(round 3's new description). orc_m is round 2's description until round 5 settles a better one. The rest are
-drafted in the same style: body, age, accent, pitch and texture, attitude, and a "clearly X, never Y" guard.
+(round 3's new description). orc_m keeps round 2's description; its Candidates come from round 5 (the orc chain on
+the anchor). The rest are drafted in the same style: body, age, accent, pitch and texture, attitude, and a
+"clearly X, never Y" guard.
 Notes from "Regenerate with note" are appended to the description (see prepare).
 """
 from __future__ import annotations
@@ -143,7 +144,9 @@ class Style:
     description: str   # VoxCPM2 voice-design instruction
     anchor_text: str   # the line every Candidate reads; lines continue from it
     mode: str = "cont"  # "cont": anchor + transcript as prompt; "ultimate": also the anchor as reference
-    effect_chain: str | None = None  # a name in vo.effects.CHAINS, applied to every line (not the anchor)
+    effect_chain: str | None = None  # a name in vo.effects.CHAINS applied to every line; off (see vo.effects)
+    anchor_chain: str | None = None  # a name in vo.effects.CHAINS applied once to each Candidate anchor
+    design: bool = True  # False: no fresh voice-design Candidates unless asked (seeded from the bake-off instead)
 
 
 A_ORC = ("You there. Raiders in the eastern ravine have been stealing our wolves. Go, bring me the heads of their "
@@ -193,10 +196,13 @@ STYLE: dict[str, Style] = {
     "human_f": Style(
         "A clear, warm young adult woman with a gentle southern English accent. Friendly, earnest and a little "
         "anxious, like a townswoman in a medieval city. Natural, expressive, mid pitch.", A_HUMAN, "cont"),
-    "orc_m": Style(  # round 2's; round 5 (orc male anchors and effect chains) will replace it
+    # Round 2's description. Round 5 (#10): no designed anchor holds the growl, so orc_m's Candidates are the bake-off
+    # anchors (vo.bakeoff_import, `vo prepare --import-bakeoff orc_m`) with the orc chain on the anchor.
+    "orc_m": Style(
         "A huge, hulking male orc warrior with an extremely deep bass voice, very low pitch, thick gravel and a "
         "guttural growl in the throat, harsh vocal fry on every word. Slow, heavy, menacing and proud, biting off "
-        "short forceful phrases like a battle-scarred warchief. Monstrous, not human.", A_ORC, "ultimate"),
+        "short forceful phrases like a battle-scarred warchief. Monstrous, not human.", A_ORC, "cont",  # "cont": as the round-5 winner was heard
+        anchor_chain="orc", design=False),
     "orc_f": Style(
         "A powerful, muscular orc warrior woman with a low, husky, rough contralto voice, gravelly and throaty with a "
         "growl at the edges. Blunt, fierce and commanding, speaking in short hard phrases like a veteran of many "
@@ -322,5 +328,5 @@ def style(aid: str) -> Style:
     if other in STYLE:
         s = STYLE[other]
         who = "woman" if aid.endswith("f") else "man"
-        return Style(f"The {who} of this kind: {s.description}", s.anchor_text, s.mode, s.effect_chain)
+        return Style(f"The {who} of this kind: {s.description}", s.anchor_text, s.mode, s.effect_chain, s.anchor_chain)
     return Style(f"A {label(aid).lower()} voice with strong, distinctive character.", A_ODDITY)

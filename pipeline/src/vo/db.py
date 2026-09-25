@@ -68,15 +68,18 @@ CREATE TABLE IF NOT EXISTS archetypes (
   id TEXT PRIMARY KEY, label TEXT, kind TEXT, gender TEXT,
   races TEXT, npcs INTEGER, lines INTEGER,
   base_description TEXT, notes TEXT, description TEXT, anchor_text TEXT, mode TEXT, effect_chain TEXT,
-  generation INTEGER NOT NULL DEFAULT 0, approved TEXT, approved_at TEXT, updated_at TEXT
+  anchor_chain TEXT, generation INTEGER NOT NULL DEFAULT 0, approved TEXT, approved_at TEXT, updated_at TEXT
 );
 -- A Candidate anchor: VoxCPM2 voice design of the Archetype's anchor line. id is "<archetype>/g<gen>s<i>".
--- status: pending | approved | rejected | superseded (an older generation).
+-- Bake-off seeds (vo.bakeoff_seeds) are "<archetype>/<key>" with a label. With an anchor chain (vo.effects), path is
+-- the processed anchor and raw_path the clip before it. status: pending | approved | rejected | superseded (an
+-- older generation).
 CREATE TABLE IF NOT EXISTS candidates (
   id TEXT PRIMARY KEY, archetype TEXT NOT NULL, generation INTEGER, seed INTEGER,
   description TEXT, anchor_text TEXT, path TEXT, duration_s REAL,
   f0 REAL, hnr REAL, centroid REAL, asr TEXT, wer REAL,
-  status TEXT NOT NULL DEFAULT 'pending', created_at TEXT, reviewed_at TEXT
+  status TEXT NOT NULL DEFAULT 'pending', created_at TEXT, reviewed_at TEXT,
+  anchor_chain TEXT, raw_path TEXT, label TEXT
 );
 CREATE INDEX IF NOT EXISTS candidates_archetype ON candidates (archetype);
 -- Sample lines per Candidate, rendered as continuation from its anchor, as vo run would.
@@ -112,6 +115,11 @@ MIGRATIONS = [
     # A core line's identity: the Source Data wording it was extracted from. raw_text differs from it once Capture
     # recorded Drift (the line is then drifted); NULL for Capture lines.
     ("lines", "source_text", "TEXT"),
+    # Approval Gate anchor chains (vo.effects) and bake-off seeds, for DBs made before them (see SCHEMA).
+    ("archetypes", "anchor_chain", "TEXT"),
+    ("candidates", "anchor_chain", "TEXT"),
+    ("candidates", "raw_path", "TEXT"),
+    ("candidates", "label", "TEXT"),
 ]
 
 # Fills source_text on core lines: the text before their first Drift update, else their current text.

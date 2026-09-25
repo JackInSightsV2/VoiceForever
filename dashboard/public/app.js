@@ -376,7 +376,7 @@ function archCard(a) {
     <div class="muted small">${races}</div>
     <p class="desc">${esc(a.base_description)}${notes}</p>
     <div class="muted small">Anchor line: <i>${esc(a.anchor_text)}</i> · continuation <span class=mono>${esc(a.mode)}</span>
-      · generation ${a.generation}${a.superseded ? ` (${a.superseded} superseded)` : ""}${a.effect_chain ? ` · effect chain <span class=mono>${esc(a.effect_chain)}</span>` : ""}</div>
+      · generation ${a.generation}${a.superseded ? ` (${a.superseded} superseded)` : ""}${a.anchor_chain ? ` · anchor effect chain <span class=mono>${esc(a.anchor_chain)}</span> (applied once to each anchor; lines continue from the processed clip)` : ""}${a.effect_chain ? ` · per-line effect chain <span class=mono>${esc(a.effect_chain)}</span>` : ""}</div>
     ${approved ? `<div class="muted small">Approved ${when(a.approved_at)}.</div>` : ""}
     ${a.candidates.length ? `<div class="cands">${a.candidates.map((c) => candCard(a, c)).join("")}</div>` : `<div class="empty">No Candidates yet: run <span class=mono>vo prepare --archetype ${esc(a.id)}</span>.</div>`}
     <div class="regen">
@@ -392,9 +392,11 @@ function candCard(a, c) {
   const metric = (label, v, unit = "") => `<span title="${label}"><span class="muted">${label}</span> ${v == null ? "–" : esc(v) + unit}</span>`;
   return `<div class="cand ${c.status}${on ? " picked" : ""}">
     <div class="chead"><b class="mono">${esc(c.id.split("/")[1])}</b><span class="muted">seed ${c.seed}</span>
+      ${c.label ? `<span class="tag">${esc(c.label)}</span>` : ""}
       ${c.status !== "pending" ? `<span class="tag ${c.status === "approved" ? "ok" : ""}">${esc(c.status)}</span>` : ""}
       ${qd.map((q) => `<span class="queued">queued: ${esc(q.replace("-candidate", ""))}</span>`).join("")}</div>
     ${c.url ? `<audio controls preload="none" src="${esc(c.url)}"></audio>` : `<span class="muted">audio missing</span>`}
+    ${c.anchor_chain ? `<details class="small"><summary class="muted">anchor through the <span class=mono>${esc(c.anchor_chain)}</span> chain; before it</summary>${c.raw_url ? `<audio controls preload="none" src="${esc(c.raw_url)}"></audio>` : ""}</details>` : ""}
     <div class="metrics">${metric("f0", c.f0, " Hz")}${metric("HNR", c.hnr, " dB")}${metric("centroid", c.centroid, " Hz")}
       <span title="${esc(c.asr || "")}"><span class="muted">WER</span> <b class="${c.wer > 0.15 ? "bad" : ""}">${pct(c.wer)}</b></span></div>
     ${c.samples

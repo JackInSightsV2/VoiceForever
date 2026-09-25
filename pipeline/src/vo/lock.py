@@ -2,7 +2,8 @@
 
 Written by `vo prepare` once every Archetype has an approved anchor (removed again if one is re-opened); read-only on
 disk. Maps each Archetype to its anchor (audio path, transcript, description, seed, continuation mode, effect chain)
-and fixes the Narrator. `vo run` refuses to start without it, and speaks every NPC line as a VoxCPM2 continuation
+and fixes the Narrator. With an anchor chain (vo.effects), `anchor` is the processed clip (`raw_anchor` the design
+it came from, `anchor_chain` the chain): lines continue from the processed clip and are not processed again. `vo run` refuses to start without it, and speaks every NPC line as a VoxCPM2 continuation
 of the NPC's Archetype anchor.
 """
 from __future__ import annotations

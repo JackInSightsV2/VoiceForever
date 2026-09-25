@@ -39,6 +39,11 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--samples", type=int, default=3, help="sample lines per Candidate, as continuation (default 3)")
     p.add_argument("--asr-model", default=None, help="Whisper model (mlx-audio)")
     p.add_argument("--list", action="store_true", help="list the Archetypes and their race labels, render nothing")
+    p.add_argument("--import-bakeoff", action="append", metavar="ARCHETYPE",
+                   help="seed this Archetype's Candidates from the bake-off anchors (vo.bakeoff_seeds), with their"
+                        " anchor chain, and render their sample lines; implies --archetype (repeatable), e.g. orc_m")
+    p.add_argument("--design", action="store_true",
+                   help="render fresh voice-design Candidates even for Archetypes seeded from the bake-off (orc_m)")
     p = sub.add_parser("run", aliases=["generate"], help="work the generation queue unattended (resumable)")
     p.add_argument("--voice", default=None,
                    help="fallback voice for NPCs whose Archetype has no approved anchor: Kokoro voice or"
@@ -131,6 +136,7 @@ def main(argv: list[str] | None = None) -> None:
         try:
             summary = prepare.prepare(conn, BUILD / "candidates", only=args.archetype, candidates=args.candidates,
                                       samples=args.samples, asr_model=args.asr_model or asr.DEFAULT_MODEL,
+                                      design=args.design, import_bakeoff=args.import_bakeoff,
                                       lock_path=lock.path(), lexicon_path=lexicon.path(), areas=_areas(args.world))
         except (archetypes.UnmappedRace, ValueError) as e:
             sys.exit(f"vo prepare: {e}")
