@@ -131,3 +131,14 @@ details summary { cursor: pointer; color: var(--muted); font-size: 12.5px; }
 .regen { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; margin-top: 12px; align-items: start; }
 .regen textarea { min-height: 38px; font-family: inherit; font-size: 13px; }
 @media (max-width: 560px) { .regen { grid-template-columns: 1fr; } }
+
+/* Approval: Lexicon */
+h2#lexicon { margin-top: 28px; }
+.lex { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr)); }
+.lexrow { display: grid; gap: 8px; min-width: 0; margin: 0; }
+.lexrow.reviewed { opacity: .8; }
+.lexhead { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.lexedit { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 6px; align-items: center; }
+.lexedit input { font: inherit; font-family: var(--mono); font-size: 13px; min-width: 0; color: var(--ink);
+  background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; }
+@media (max-width: 560px) { .lexedit { grid-template-columns: 1fr 1fr; } .lexedit input { grid-column: 1 / -1; } }

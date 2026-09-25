@@ -1,5 +1,6 @@
 // Write side: the dashboard's only writes are review_actions rows, consumed by `vo run`. It never touches audio.
 import type { Database } from "bun:sqlite";
+import { LEXICON_ACTIONS, LexiconActionError, validateLexiconAction } from "./lexicon";
 import { APPROVAL_ACTIONS, runState } from "./queries";
 
 export const LINE_ACTIONS = ["retry-line", "skip-line", "edit-tts-text"] as const;
@@ -87,6 +88,16 @@ export function validate(read: Database, req: ActionRequest, now: Date = new Dat
     if (typeof note !== "string") throw new ActionError("note must be text");
     if (note.trim().length > MAX_NOTE) throw new ActionError(`note is over ${MAX_NOTE} characters`);
     return { action, target: id, payload: note.trim() ? JSON.stringify({ note: note.trim() }) : null };
+  }
+
+  // Lexicon: accept or correct a top name's spelling, consumed by `vo prepare`.
+  if ((LEXICON_ACTIONS as readonly string[]).includes(action)) {
+    try {
+      return validateLexiconAction(read, action, req.target, payload as Record<string, unknown>);
+    } catch (e) {
+      if (e instanceof LexiconActionError) throw new ActionError(e.message, e.status);
+      throw e;
+    }
   }
 
   throw new ActionError(`unknown action ${JSON.stringify(action)}`);

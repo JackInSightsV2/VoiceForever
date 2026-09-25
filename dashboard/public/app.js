@@ -59,7 +59,8 @@ async function act(action, target, payload) {
     toast(`Failed: ${body.error || res.status}`);
     return false;
   }
-  const by = action.endsWith("-candidate") || action === "regenerate-archetype" ? "vo prepare" : "vo run";
+  const by = action.endsWith("-candidate") || action === "regenerate-archetype" || action.endsWith("-lexicon")
+    ? "vo prepare" : "vo run";
   toast(`Queued ${action} (#${body.id}), applied by ${by}`);
   refresh();
   return true;
@@ -299,9 +300,11 @@ const openArch = new Set(); // expanded Archetype cards survive live re-renders
 let archFilter = "open";
 const pct = (n) => (n == null ? "–" : `${Math.round(n * 100)}%`);
 
+const approvalOpen = (d) => d.progress.total - d.progress.approved + (d.lexicon ? d.lexicon.progress.total - d.lexicon.progress.reviewed : 0);
+
 function renderApproval(d) {
   const p = d.progress;
-  $("#nav-a").textContent = p.total - p.approved || "";
+  $("#nav-a").textContent = approvalOpen(d) || "";
   const shown = d.archetypes.filter((a) => archFilter === "all" || (archFilter === "open" ? !a.approved : a.approved));
   const n = d.narrator;
   main.innerHTML = `<h1>Approval <span class="muted">(${p.approved} / ${p.total} Archetypes approved)</span></h1>
@@ -316,7 +319,7 @@ function renderApproval(d) {
     <div class="legend"><span><i class="sw s-done"></i>approved <b>${p.approved}</b></span>
       <span><i class="sw s-pending"></i>open <b>${p.total - p.approved}</b></span>
       ${p.queued_approvals ? `<span>approvals queued for <span class=mono>vo prepare</span> <b>${p.queued_approvals}</b></span>` : ""}
-      <span>${d.complete ? "All approved: <b>vo prepare</b> writes the lock, then <b>vo run</b> can start." : "<span class=mono>vo run</span> is locked until every Archetype is approved."}</span>
+      <span>${d.complete ? "All approved: <b>vo prepare</b> writes both locks, then <b>vo run</b> can start." : "<span class=mono>vo run</span> is locked until every Archetype and every top Lexicon name is approved."}</span>
     </div>
   </section>
   ${
@@ -331,7 +334,8 @@ function renderApproval(d) {
     ${["open", "approved", "all"].map((f) => `<button data-filter="${f}" class="${archFilter === f ? "on" : ""}">${f === "open" ? "Needs approval" : f[0].toUpperCase() + f.slice(1)}</button>`).join("")}
   </div>
   ${d.archetypes.length ? "" : `<div class="card empty">No Archetypes yet: run <span class=mono>vo prepare</span>.</div>`}
-  <div class="archs">${shown.map(archCard).join("")}</div>`;
+  <div class="archs">${shown.map(archCard).join("")}</div>
+  ${d.lexicon ? lexiconSection(d.lexicon) : ""}`;
 
   main.querySelectorAll("[data-filter]").forEach((b) =>
     b.addEventListener("click", () => {
@@ -342,6 +346,7 @@ function renderApproval(d) {
   main.querySelectorAll("details.arch").forEach((el) =>
     el.addEventListener("toggle", () => (el.open ? openArch.add(el.dataset.id) : openArch.delete(el.dataset.id))),
   );
+  wireLexicon(d);
   main.querySelectorAll("[data-a]").forEach((b) =>
     b.addEventListener("click", () => {
       const { a, target } = b.dataset;
@@ -406,6 +411,89 @@ function candCard(a, c) {
   </div>`;
 }
 
+// --- Approval: Lexicon ------------------------------------------------------------------------------------------
+
+let lexFilter = "open";
+const LEX_REVIEWED = ["accepted", "corrected"];
+
+function lexiconSection(x) {
+  const p = x.progress;
+  const shown = x.names.filter((n) =>
+    lexFilter === "all" || (lexFilter === "open" ? !LEX_REVIEWED.includes(n.status) : LEX_REVIEWED.includes(n.status)));
+  return `<h2 id="lexicon">Lexicon <span class="muted">(${p.reviewed} / ${p.total} top names reviewed)</span></h2>
+  <p class="muted">The most-spoken lore names, each with a drafted respelling and a sample rendered with it (the voice is
+  named on each: the Narrator, or the approved anchor of the NPC's Archetype). Accept it, or type a better spelling
+  and save. <span class=mono>vo prepare</span> applies these, re-renders corrected samples, and writes
+  <span class=mono>lexicon.json</span> once all are reviewed. ${fmt(x.auto)} other names are drafted automatically and
+  respelled when ASR keeps missing them.</p>
+  <section class="card">
+    <div class="bar" role="img" aria-label="Reviewed Lexicon names">
+      <span class="s-done" style="flex:${p.reviewed}"></span><span class="s-pending" style="flex:${p.total - p.reviewed || (p.total ? 0 : 1)}"></span>
+    </div>
+    <div class="legend"><span><i class="sw s-done"></i>reviewed <b>${p.reviewed}</b></span>
+      <span><i class="sw s-pending"></i>open <b>${p.total - p.reviewed}</b></span>
+      ${p.queued ? `<span>queued for <span class=mono>vo prepare</span> <b>${p.queued}</b></span>` : ""}
+      <span>${x.complete ? "Lexicon complete." : "<span class=mono>vo run</span> is locked until every top name is reviewed."}</span>
+    </div>
+  </section>
+  <div class="filters">Show
+    ${["open", "reviewed", "all"].map((f) => `<button data-lexfilter="${f}" class="${lexFilter === f ? "on" : ""}">${f === "open" ? "Needs review" : f[0].toUpperCase() + f.slice(1)}</button>`).join("")}
+  </div>
+  ${x.names.length ? "" : `<div class="card empty">No Lexicon names yet: run <span class=mono>vo prepare</span>.</div>`}
+  <div class="lex">${shown.map(lexRow).join("")}</div>`;
+}
+
+function lexRow(n) {
+  const reviewed = LEX_REVIEWED.includes(n.status);
+  const flags = [n.npc ? "NPC" : "", n.zone ? "zone" : ""].filter(Boolean).join(", ");
+  const queued = n.queued.map((q) => `<span class="queued">queued: ${q.action === "accept-lexicon" ? "accept" : `correct to ${esc(q.spelling)}`}</span>`).join("");
+  const s = n.sample;
+  return `<div class="card lexrow ${reviewed ? "reviewed" : ""}" data-name="${esc(n.name)}">
+    <div class="lexhead"><span class="muted mono">#${n.rank}</span><b>${esc(n.name)}</b>
+      <span class="muted">${fmt(n.lines)} lines${flags ? ` · ${flags}` : ""}</span>
+      ${reviewed ? `<span class="tag ok">${esc(n.status)}</span>` : ""}${queued}</div>
+    ${s.url ? `<div class="sample"><div class="slabel"><span class="stext" title="Spoken: ${esc(s.spoken)}">${esc(s.text)}</span></div>
+      <audio controls preload="none" src="${esc(s.url)}"></audio>
+      <div class="muted small">${esc(s.voice || "")}, spelled <span class=mono>${esc(s.spelling)}</span>${s.stale ? " · re-rendered with the new spelling by the next <span class=mono>vo prepare</span>" : ""}</div></div>`
+      : `<div class="muted small">No sample yet: run <span class=mono>vo prepare</span>.</div>`}
+    <div class="lexedit">
+      <input data-spell="${esc(n.name)}" value="${esc(n.spelling)}" maxlength="120" aria-label="Spelling for ${esc(n.name)}" spellcheck="false">
+      <button class="primary" data-lex="accept" data-target="${esc(n.name)}">Accept</button>
+      <button data-lex="correct" data-target="${esc(n.name)}">Save correction</button>
+    </div>
+    ${n.draft !== n.spelling ? `<div class="muted small">Draft: <span class=mono>${esc(n.draft)}</span></div>` : ""}
+  </div>`;
+}
+
+function wireLexicon(d) {
+  main.querySelectorAll("[data-lexfilter]").forEach((b) =>
+    b.addEventListener("click", () => {
+      lexFilter = b.dataset.lexfilter;
+      renderApproval(d);
+    }),
+  );
+  main.querySelectorAll("[data-lex]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const name = b.dataset.target;
+      const input = main.querySelector(`input[data-spell="${CSS.escape(name)}"]`);
+      const spelling = input.value.trim();
+      if (b.dataset.lex === "correct") {
+        if (!spelling) return toast("Type a spelling first");
+        act("correct-lexicon", name, { spelling });
+      } else if (spelling !== input.defaultValue.trim()) {
+        act("correct-lexicon", name, { spelling }); // edited then accepted: that's a correction
+      } else {
+        act("accept-lexicon", name, { spelling });
+      }
+    }),
+  );
+  main.querySelectorAll("input[data-spell]").forEach((i) =>
+    i.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") main.querySelector(`button[data-lex="correct"][data-target="${CSS.escape(i.dataset.spell)}"]`).click();
+    }),
+  );
+}
+
 // --- Coming pages -----------------------------------------------------------------------------------------------
 
 function renderSoon() {
@@ -422,7 +510,8 @@ let lastSnapshot = null;
 // The Approval page is for listening: a live update waits while audio plays or a note is being typed.
 const approvalBusy = () =>
   [...main.querySelectorAll("audio")].some((a) => !a.paused) ||
-  (document.activeElement?.tagName === "TEXTAREA" && document.activeElement.value.trim() !== "");
+  (document.activeElement?.tagName === "TEXTAREA" && document.activeElement.value.trim() !== "") ||
+  [...main.querySelectorAll("input[data-spell]")].some((i) => i.value !== i.defaultValue); // a Lexicon edit
 
 function show(d) {
   if ((page === "quarantine" && editing.size) || (page === "approval" && approvalBusy())) {
@@ -457,4 +546,4 @@ document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("on", a.dat
 if (RENDER[page]) connect();
 else renderSoon();
 if (page !== "quarantine") fetch("/api/quarantine").then((r) => r.json()).then((d) => ($("#nav-q").textContent = d.lines.length || ""));
-if (page !== "approval") fetch("/api/approval").then((r) => r.json()).then((d) => ($("#nav-a").textContent = d.progress.total - d.progress.approved || ""));
+if (page !== "approval") fetch("/api/approval").then((r) => r.json()).then((d) => ($("#nav-a").textContent = approvalOpen(d) || ""));

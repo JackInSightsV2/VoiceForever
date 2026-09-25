@@ -2,6 +2,7 @@
 import type { Database } from "bun:sqlite";
 import { existsSync, realpathSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
+import { lexiconSnapshot } from "./lexicon";
 import { localIso, parseLocal, secondsBetween } from "./time";
 
 /** A run whose heartbeat is older than this is treated as dead (killed without cleanup). */
@@ -259,10 +260,14 @@ export function approval(db: Database, candidatesRoot: string) {
   }
   const approved = out.filter((a) => a.approved).length;
   const queuedApprovals = out.filter((a) => !a.approved && a.queued.some((q: Row) => q.action === "approve-candidate")).length;
+  const voicesComplete = out.length > 0 && approved === out.length;
+  const lexicon = lexiconSnapshot(db, url);
   return {
     narrator,
     progress: { approved, total: out.length, queued_approvals: queuedApprovals },
-    complete: out.length > 0 && approved === out.length,
+    voices_complete: voicesComplete,
+    complete: voicesComplete && lexicon.complete, // the Approval Gate needs both locks
     archetypes: out,
+    lexicon,
   };
 }
