@@ -470,3 +470,32 @@ def test_orc_chain_matches_the_bakeoff():
     times, f0 = np.linspace(0, 1, 200), np.full(200, 110.0)
     assert np.array_equal(dsp.subharmonic_envelope(sr, sr, times, f0, 0.5),
                           bdsp.subharmonic_envelope(sr, sr, times, f0, 0.5))
+
+
+class SilentOnceEngine(FakeEngine):
+    """Continuation returns silence on its first seed for each sample, like VoxCPM2 now and then."""
+    def continue_(self, text, anchor, anchor_text, seed, mode="cont"):
+        self.continue_calls.append((text, str(anchor), anchor_text, seed, mode))
+        samples, sr = self._tone(seed)
+        return (np.zeros_like(samples), sr) if seed < 1000 else (samples, sr)
+
+
+class AlwaysSilentEngine(FakeEngine):
+    def continue_(self, text, anchor, anchor_text, seed, mode="cont"):
+        self.continue_calls.append((text, str(anchor), anchor_text, seed, mode))
+        samples, sr = self._tone(seed)
+        return np.zeros_like(samples), sr
+
+
+def test_silent_sample_is_retried_with_a_new_seed(small, tmp_path):
+    eng = SilentOnceEngine()
+    s, _ = _prepare(small, tmp_path, eng)
+    assert s.samples > 0
+    assert small.execute("SELECT count(*) FROM candidate_samples").fetchone()[0] == s.samples
+    assert any(c[3] >= 1000 for c in eng.continue_calls)
+
+
+def test_always_silent_sample_is_skipped_not_fatal(small, tmp_path):
+    s, _ = _prepare(small, tmp_path, AlwaysSilentEngine())
+    assert small.execute("SELECT count(*) FROM candidates").fetchone()[0] > 0
+    assert small.execute("SELECT count(*) FROM candidate_samples").fetchone()[0] == 0

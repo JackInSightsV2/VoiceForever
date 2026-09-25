@@ -333,6 +333,20 @@ def seed_from_bakeoff(conn, a: sqlite3.Row, out: Path, check: _Check, root: Path
     return done
 
 
+SAMPLE_TRIES = 3
+
+
+def _continue_audible(engine: Engine, a: sqlite3.Row, c: sqlite3.Row, text: str, idx: int):
+    """Continue `text` from the Candidate's anchor, re-seeding when VoxCPM2 returns silence (it occasionally does)."""
+    for attempt in range(SAMPLE_TRIES):
+        samples, rate = engine.continue_(text, c["path"], c["anchor_text"], idx + 1000 * attempt, a["mode"] or "cont")
+        try:
+            return audio.trim(effects.apply(a["effect_chain"], samples, rate), rate), rate
+        except ValueError:
+            if attempt == SAMPLE_TRIES - 1:
+                raise
+
+
 def _render_samples(conn, a: sqlite3.Row, out: Path, engine: Engine, check: _Check, lines: list[tuple[int, str]],
                     log) -> int:
     done = 0
@@ -346,8 +360,11 @@ def _render_samples(conn, a: sqlite3.Row, out: Path, engine: Engine, check: _Che
                                (c["id"], idx)).fetchone()
             if row is not None and row["text"] == text and _exists(row["path"]):
                 continue
-            samples, rate = engine.continue_(text, c["path"], c["anchor_text"], idx, a["mode"] or "cont")
-            samples = audio.trim(effects.apply(a["effect_chain"], samples, rate), rate)
+            try:
+                samples, rate = _continue_audible(engine, a, c, text, idx)
+            except ValueError as e:  # silent or empty after every retry: skip it, the Candidate stays reviewable
+                log(f"  sample {c['id']} #{idx} (line {line_id}): skipped ({e})")
+                continue
             wav = Path(c["path"]).with_name(f"{Path(c['path']).stem}_{idx}.wav")
             write_wav(wav, samples, rate)
             heard = check.heard(wav)
