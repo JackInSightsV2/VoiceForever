@@ -211,9 +211,9 @@ def draft(name: str) -> str:
 
 
 def _syllables(word: str) -> str:
-    """A crude syllable split for an alternative respelling: a hyphen before each consonant-vowel pair."""
+    """A crude syllable split for an alternative respelling: V-CV and VC-CV (Ma-rau-don, Zzor-goth)."""
     w = re.sub(APOS, "", word.lower())
-    w = re.sub(r"(?<=[aeiouy])(?=[^aeiouy-][aeiouy])", "-", w)
+    w = re.sub(r"(?<=[aeiouy])(?=[^aeiouy-][aeiouy])|(?<=[aeiouy][^aeiouy-])(?=[^aeiouy-][aeiouy])", "-", w)
     return w[:1].upper() + w[1:]
 
 
