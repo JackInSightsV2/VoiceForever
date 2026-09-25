@@ -37,6 +37,20 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--samples", type=int, default=3, help="sample lines per Candidate, as continuation (default 3)")
     p.add_argument("--asr-model", default=None, help="Whisper model (mlx-audio)")
     p.add_argument("--list", action="store_true", help="list the Archetypes and their race labels, render nothing")
+    p = sub.add_parser("voices", help="build every NPC's own voice (anchor) from its approved Archetype, and the"
+                                      " Neighbours table (resumable)")
+    p.add_argument("--npc", type=int, action="append", help="only this NPC id (repeatable)")
+    p.add_argument("--archetype", action="append", help="only NPCs of this Archetype (repeatable), e.g. orc_f")
+    p.add_argument("--limit", type=int, help="build at most N voices this run")
+    p.add_argument("--strategy", choices=("dsp", "design"), default="dsp",
+                   help="dsp: shift the Archetype anchor (default); design: VoxCPM2 voice design per NPC")
+    p.add_argument("--candidates", type=int, default=4, help="candidate anchors per NPC and attempt (default 4)")
+    p.add_argument("--ceiling", type=float, help="min similarity to the Archetype anchor")
+    p.add_argument("--floor", type=float, help="max similarity to any Neighbour")
+    p.add_argument("--max-rerolls", type=int, help="re-rolls before an NPC is listed as a leftover")
+    p.add_argument("--radius", type=float, default=150.0, help="spawn distance for Neighbours, yards (default 150)")
+    p.add_argument("--neighbours-only", action="store_true", help="refresh the Neighbours table and its stats only")
+    p.add_argument("--leftovers", action="store_true", help="list NPCs whose voice missed a constraint, build nothing")
     p = sub.add_parser("run", aliases=["generate"], help="work the generation queue unattended (resumable)")
     p.add_argument("--voice", default=None,
                    help="fallback voice for NPCs whose Archetype has no approved anchor: Kokoro voice or"
@@ -122,14 +136,45 @@ def main(argv: list[str] | None = None) -> None:
         except (archetypes.UnmappedRace, ValueError) as e:
             sys.exit(f"vo prepare: {e}")
         print(prepare.summary_text(summary))
+    elif args.command == "voices":
+        from dataclasses import replace
+        from vo import lock, neighbours, source, voices
+        conn = db.connect(args.db)
+        if args.leftovers:
+            for r in voices.leftovers(conn):
+                print(f"{r['npc_id']:>7} {r['name']:<32} {r['issue']:<8} {r['detail']}")
+            return
+        world = source.open_world(args.world) if args.world.exists() else None
+        if world is None:
+            print(f"warning: no world DB at {args.world}; quest-chain Neighbours from lines only", file=sys.stderr)
+        print(neighbours.refresh(conn, world, args.radius).text())
+        if args.neighbours_only:
+            return
+        try:
+            approved = lock.load(lock.path())
+        except lock.LockError as e:
+            sys.exit(f"vo voices: {e}")
+        cfg = voices.Config(strategy=args.strategy, candidates=args.candidates)
+        cfg = replace(cfg, **{k: v for k, v in (("ceiling", args.ceiling), ("floor", args.floor),
+                                                ("max_rerolls", args.max_rerolls)) if v is not None})
+        out = Path(os.environ.get(voices.VOICE_ENV) or voices.default_dir())
+        summary = voices.build(conn, approved, out, cfg=cfg, only_npcs=set(args.npc or ()) or None,
+                               only_archetypes=set(args.archetype or ()) or None, limit=args.limit)
+        voices.update_sims(conn)
+        print(voices.summary_text(summary, cfg))
     elif args.command in ("run", "generate"):
-        from vo import archetypes, asr, lock, run, tts
+        from vo import archetypes, asr, lock, run, tts, voices
         conn = db.connect(args.db)
         try:
             approved = lock.require(conn, lock.path())
         except (lock.LockError, archetypes.UnmappedRace) as e:
             sys.exit(f"vo run refuses to start: {e}")
         os.environ[lock.ENV] = str(lock.path())  # spawned workers load the same lock
+        os.environ.setdefault(voices.VOICE_ENV, str(voices.default_dir()))  # ... and find the NPC anchors
+        stale = voices.drop_stale(conn, approved)
+        if stale:
+            print(f"{stale} NPC voices were built on a replaced Archetype anchor: they speak with the Archetype anchor"
+                  f" until `vo voices` rebuilds them")
         voice = args.voice or tts.DEFAULT_VOICE
         narrator = args.narrator_voice or approved.get("narrator", {}).get("voice_id") or tts.NARRATOR_VOICE_ID
         opts = dict(

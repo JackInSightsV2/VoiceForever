@@ -84,6 +84,17 @@ CREATE TABLE IF NOT EXISTS candidate_samples (
   candidate TEXT, idx INTEGER, line_id INTEGER, text TEXT, path TEXT, duration_s REAL, asr TEXT, wer REAL,
   PRIMARY KEY (candidate, idx)
 );
+-- Neighbours (#13): NPC pairs a player hears close together, a < b. reason: spawn | quest | spawn+quest; distance:
+-- closest spawns in yards (spawn pairs); sim: WavLM-SV cosine of their NPC anchors once both have one (vo voices).
+CREATE TABLE IF NOT EXISTS neighbours (a INTEGER, b INTEGER, reason TEXT, distance REAL, sim REAL, PRIMARY KEY (a, b));
+-- How each NPC Voice was built (vo voices): roll (bumped by a dashboard re-roll), the attempt that cleared (re-rolls),
+-- its similarity to the Archetype anchor and to its closest Neighbour, and status ok | leftover (issue: ceiling,
+-- floor, pitch, hnr, wer; listed for the morning report, never blocking). stale = 1: rebuild on the next vo voices.
+CREATE TABLE IF NOT EXISTS voice_builds (
+  npc_id INTEGER PRIMARY KEY, roll INTEGER NOT NULL DEFAULT 0, attempt INTEGER, strategy TEXT, seed INTEGER,
+  params TEXT, archetype_sim REAL, neighbour_sim REAL, neighbour INTEGER, f0 REAL, hnr REAL, wer REAL, tried INTEGER,
+  status TEXT, issue TEXT, detail TEXT, stale INTEGER NOT NULL DEFAULT 0, updated_at TEXT
+);
 -- A line's previous text, kept when Capture (Drift) replaces it.
 CREATE TABLE IF NOT EXISTS line_history (
   line_id INTEGER, raw_text TEXT, tts_text TEXT, text_hash TEXT, reason TEXT, capture_id INTEGER,
