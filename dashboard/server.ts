@@ -28,10 +28,13 @@ export interface Options {
 
 export function openDatabases(path: string) {
   if (!existsSync(path)) throw new Error(`${path} not found: run \`vo init\` (or \`vo run\`) first`);
-  const read = new Database(path, { readonly: true });
-  read.run("PRAGMA busy_timeout = 5000");
+  // The writer opens first and touches the file: a read-only connection can't create the WAL's -shm itself, so with
+  // no pipeline process holding the DB open it would fail with SQLITE_CANTOPEN.
   const write = new Database(path, { readwrite: true, create: false });
   write.run("PRAGMA busy_timeout = 10000");
+  write.query("SELECT COUNT(*) FROM sqlite_master").get();
+  const read = new Database(path, { readonly: true });
+  read.run("PRAGMA busy_timeout = 5000");
   return { read, write };
 }
 
