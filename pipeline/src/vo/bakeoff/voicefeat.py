@@ -42,3 +42,38 @@ def measure(audio: np.ndarray, sr: int, male: bool = True) -> dict:
         "hnr": round(float(hnr), 1) if hnr == hnr else None,
         "centroid": None if cen is None else round(cen),
     }
+
+
+# --- round 5: is the roughness sustained, or does the voice "clean itself up"? -----------------------
+
+ROUGH_DB = 7.0  # a voiced 10 ms frame with HNR below this counts as rough (clean male speech sits ~12-20 dB)
+
+
+def thirds(times: np.ndarray, hnr: np.ndarray, duration: float, rough_db: float = ROUGH_DB) -> dict:
+    """Pure: per-frame HNR (dB; Praat's -200 marks unvoiced) -> roughness of the first, middle and last
+    third of the clip. `hnr_thirds`: mean HNR of voiced frames per third; `rough_thirds`: share of voiced
+    frames below `rough_db`; `rough`: that share over the whole clip; `sustained`: the lowest third's
+    share (a clip is only as orcish as its cleanest third); `drift`: last-third minus first-third mean HNR
+    (positive = the voice got cleaner as it went on)."""
+    t, h = np.asarray(times, dtype=np.float64), np.asarray(hnr, dtype=np.float64)
+    voiced = h > -100
+    edges = (0, duration / 3, 2 * duration / 3, duration + 1e-9)
+    hs, rs = [], []
+    for a, b in zip(edges, edges[1:]):
+        v = h[voiced & (t >= a) & (t < b)]
+        hs.append(round(float(v.mean()), 1) if len(v) else None)
+        rs.append(round(float((v < rough_db).mean()), 3) if len(v) else None)
+    allv = h[voiced]
+    known = [r for r in rs if r is not None]
+    return {"hnr_thirds": hs, "rough_thirds": rs,
+            "rough": round(float((allv < rough_db).mean()), 3) if len(allv) else None,
+            "sustained": min(known) if known else None,
+            "drift": round(hs[2] - hs[0], 1) if hs[0] is not None and hs[2] is not None else None}
+
+
+def roughness(audio: np.ndarray, sr: int, male: bool = True) -> dict:
+    import parselmouth
+
+    snd = parselmouth.Sound(np.asarray(audio, dtype=np.float64), sampling_frequency=sr)
+    h = snd.to_harmonicity_cc(time_step=0.01, minimum_pitch=50 if male else 75)
+    return thirds(h.xs(), h.values[0], snd.duration)

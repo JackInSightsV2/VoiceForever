@@ -7,6 +7,11 @@ A Chain is plain data (shown on the listening page). `apply` runs it:
 3. Rasp: fast irregular amplitude modulation (30-70 Hz), heard as roughness / vocal fry.
 4. Saturation in parallel (drive + wet mix), then low-shelf body and a gentle high cut.
 5. Peak-safe level match back to the input RMS.
+Round 5 adds two growl stages (default off, so round-2 chains are unchanged):
+6. Subharmonic ("period doubling"): every other glottal cycle attenuated, following the tracked pitch.
+   Real growl and vocal fry are largely period doubling; it puts energy at f0/2 and lowers HNR.
+7. Growl layer: an octave-down copy, roughened (rasp) and hard-driven, band-limited to the throat
+   range and mixed under the voice, so the grit is there on every voiced frame.
 
 `vary` derives a bounded, deterministic per-NPC variation of a Chain from a seed (the NPC id),
 so NPC Voices of one Archetype differ in size/pitch/grit but stay inside the race's range.
@@ -31,6 +36,8 @@ class Chain:
     wet: float = 0.0             # saturation parallel mix (0..1)
     low_shelf_db: float = 0.0    # +dB below ~160 Hz
     high_cut_hz: float = 0.0     # 0 = off
+    subharm: float = 0.0         # period-doubling depth (0..1)
+    growl: float = 0.0           # distorted octave-down growl layer gain (0..1, relative)
 
     @property
     def is_identity(self) -> bool:
@@ -59,6 +66,8 @@ class Chain:
             wet=round(min(1.0, lerp(0, self.wet)), 3),
             low_shelf_db=round(lerp(0, self.low_shelf_db), 2),
             high_cut_hz=self.high_cut_hz,
+            subharm=round(min(0.95, lerp(0, self.subharm)), 3),
+            growl=round(min(1.0, lerp(0, self.growl)), 3),
         )
 
 
@@ -123,6 +132,47 @@ def rasp_envelope(n: int, sr: int, depth: float, hz: float, seed: int = 0) -> np
     return (1 - depth * mod).astype(np.float32)
 
 
+def subharmonic_envelope(n: int, sr: int, times: np.ndarray, f0: np.ndarray, depth: float) -> np.ndarray:
+    """Gain envelope that attenuates every other pitch period: 1 - depth * (1 + cos(phase)) / 2 with the
+    phase running at f0/2 (f0 track: `times` in s, `f0` in Hz, 0 = unvoiced). Unvoiced samples keep gain 1;
+    the depth fades in and out over ~20 ms at voicing edges so there are no clicks."""
+    if depth <= 0 or n == 0 or len(times) == 0:
+        return np.ones(n, dtype=np.float32)
+    t = np.arange(n) / sr
+    voiced = (np.asarray(f0) > 0).astype(np.float64)
+    f = np.asarray(f0, dtype=np.float64)
+    fill = np.where(f > 0, f, np.nan)
+    if np.all(np.isnan(fill)):
+        return np.ones(n, dtype=np.float32)
+    idx = np.arange(len(fill))
+    ok = ~np.isnan(fill)
+    fill = np.interp(idx, idx[ok], fill[ok])  # bridge unvoiced gaps so the phase stays continuous
+    f_s = np.interp(t, times, fill)
+    v_s = np.interp(t, times, voiced)
+    k = max(1, int(0.02 * sr))
+    v_s = np.convolve(v_s, np.ones(k) / k, mode="same")
+    phase = 2 * np.pi * np.cumsum(f_s / 2) / sr
+    return (1 - depth * v_s * 0.5 * (1 + np.cos(phase))).astype(np.float32)
+
+
+def _pitch_track(x: np.ndarray, sr: int) -> tuple[np.ndarray, np.ndarray]:
+    import parselmouth
+
+    p = parselmouth.Sound(x.astype(np.float64), sampling_frequency=sr).to_pitch(time_step=0.005, pitch_floor=50,
+                                                                              pitch_ceiling=400)
+    return p.xs(), p.selected_array["frequency"]
+
+
+def _growl_layer(x: np.ndarray, sr: int, chain: Chain) -> np.ndarray:
+    from pedalboard import Distortion, HighpassFilter, LowpassFilter, Pedalboard
+
+    low = _change_gender(x, sr, 0.9, -12.0, 1.0)[: len(x)]
+    low = low * rasp_envelope(len(low), sr, 0.7, max(chain.rasp_hz, 30.0) * 0.8, seed=1)
+    g = Pedalboard([HighpassFilter(cutoff_frequency_hz=70), Distortion(drive_db=28),
+                    LowpassFilter(cutoff_frequency_hz=2200)])(low[None, :].astype(np.float32), sr)[0]
+    return g * (np.sqrt(np.mean(x**2)) / (np.sqrt(np.mean(g**2)) or 1))
+
+
 def apply(audio: np.ndarray, sr: int, chain: Chain) -> np.ndarray:
     audio = np.asarray(audio, dtype=np.float32).reshape(-1)
     if chain.is_identity or len(audio) < sr // 10:
@@ -134,6 +184,11 @@ def apply(audio: np.ndarray, sr: int, chain: Chain) -> np.ndarray:
     if chain.sub > 0:
         low = _change_gender(x, sr, 1.0, -12.0, 1.0)
         x = x + chain.sub * low[: len(x)]
+    if chain.subharm > 0:
+        times, f0 = _pitch_track(x, sr)
+        x = x * subharmonic_envelope(len(x), sr, times, f0, chain.subharm)
+    if chain.growl > 0:
+        x = x + chain.growl * _growl_layer(x, sr, chain)
     if chain.rasp > 0:
         x = x * rasp_envelope(len(x), sr, chain.rasp, chain.rasp_hz)
     from pedalboard import Distortion, HighShelfFilter, LowShelfFilter, LowpassFilter, Pedalboard
