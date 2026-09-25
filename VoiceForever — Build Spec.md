@@ -60,11 +60,11 @@ flowchart LR
 
 **1. `vo prepare`** runs extraction and text prep, then generates:
 
-- **Candidates:** 3 per race and gender, roughly 20 races × 2 × 3 ≈ 120 voices. Each renders the same 2 test lines: a greeting and a quest-detail passage.
-- **The Narrator** as its own entry.
+- **Candidates:** 8 per Archetype (32 today: 21 race and gender pairs plus 11 Creature Family variants, mapped in `vo.archetypes`), each a seeded VoxCPM2 voice design of the Archetype's anchor line. Each Candidate also speaks 3 of the Archetype's real lines as continuations of itself, so you can hear whether it holds up across lines.
+- **The Narrator** as its own entry, fixed (Kokoro `bm_lewis`) and shown as already decided.
 - **Lexicon drafts** for the top \~300 proper nouns by line count, each with a rendered sample.
 
-**2. Approval page.** Per Candidate you can **Approve**, **Reject**, or **Regenerate with a note** (e.g. "deeper, less theatrical"). The note is appended to that Candidate's prompt. You need at least one approved Archetype per race and gender. Per Lexicon entry you can accept or correct the spelling. Approval writes a locked `approved_voices.json` and `lexicon.json`, and `vo run` refuses to start without them. Names outside the top 300 are drafted automatically and checked by ASR.
+**2. Approval page.** Per Candidate you can **Approve** (it becomes the Archetype's anchor) or **Reject**; per Archetype you can **Regenerate with a note** (e.g. "deeper, less theatrical"). The note is appended to the Archetype's description, and a new batch of Candidates is rendered. The actions are queued, and the next `vo prepare` applies them. You need an approved anchor for every Archetype. Per Lexicon entry you can accept or correct the spelling. Approval writes a locked `approved_voices.json` and `lexicon.json`, and `vo run` refuses to start without them. Names outside the top 300 are drafted automatically and checked by ASR.
 
 **3. `vo run`** is fully unattended:
 
