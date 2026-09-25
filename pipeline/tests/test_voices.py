@@ -274,6 +274,27 @@ def test_leftovers_are_listed_not_blocking(built):
     assert set(_voices(conn)) == {1, 2, 3, 4, 5, 6}  # every NPC still gets a voice
 
 
+def test_gate_leftover_keeps_the_archetype_anchor(built):
+    """No candidate sounds like the Archetype (here: every one is far off its pitch): no own voice, a leftover row,
+    and vo run keeps the Archetype anchor. It isn't rebuilt on the next run."""
+    conn, data, out = built
+    calls = []
+
+    def off_pitch(samples, rate, male):
+        calls.append(1)
+        return {"f0": 150.0 if not calls[1:] else 400.0, "hnr": 10.0}  # the first call measures the Archetype anchor
+    tools = voices.Tools(engine=FakeEngine(), embed=FakeEmbed(), measure=off_pitch)
+    cfg = voices.Config(ceiling=-1.0, floor=1.0, max_rerolls=1, candidates=2)
+    s = voices.build(conn, data, out, cfg=cfg, tools=tools, only_npcs={1}, log=lambda m: None)
+    assert (s.built, s.leftovers) == (1, 1)
+    assert _voices(conn) == {}
+    b = conn.execute("SELECT * FROM voice_builds WHERE npc_id = 1").fetchone()
+    assert b["issue"] == "pitch" and b["detail"].endswith("speaks with the Archetype anchor") and b["anchor"] == "orc_f/g0s3"
+    assert not list(out.rglob("*.wav"))
+    s = voices.build(conn, data, out, cfg=cfg, tools=tools, only_npcs={1}, log=lambda m: None)
+    assert s.built == 0
+
+
 def test_reroll_action_rebuilds_with_a_new_roll(built):
     conn, data, out = built
     _build(conn, data, out)

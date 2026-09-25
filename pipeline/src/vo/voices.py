@@ -339,7 +339,7 @@ class Choice:
 
 
 def _fallback_key(c: Cand):
-    return (not c.reasons, -c.nmax, c.arch_sim)
+    return (not c.reasons, -len(c.reasons), -c.nmax, c.arch_sim)
 
 
 def choose(cands: list[Cand], cfg: Config) -> Cand | None:
@@ -546,8 +546,7 @@ def consume_rerolls(conn: sqlite3.Connection, log: Callable[[str], None] = print
 def todo(conn: sqlite3.Connection, npcs: dict[int, Npc], lock_data: dict, *, only_npcs=None, only_archetypes=None,
          limit: int | None = None) -> list[Npc]:
     """NPCs to (re)build, in id order: no voice yet, re-roll queued, or built on an older Archetype anchor."""
-    built = {r["npc_id"]: r for r in conn.execute(
-        "SELECT b.npc_id, b.stale, v.voice_id FROM voice_builds b LEFT JOIN voices v ON v.npc_id = b.npc_id")}
+    built = {r["npc_id"]: r for r in conn.execute("SELECT npc_id, stale, anchor FROM voice_builds")}
     out = []
     for nid, npc in npcs.items():
         if only_npcs and nid not in only_npcs:
@@ -558,8 +557,7 @@ def todo(conn: sqlite3.Connection, npcs: dict[int, Npc], lock_data: dict, *, onl
         if entry is None:
             continue
         b = built.get(nid)
-        prefix = f"{lock.BACKEND}:{npc.archetype}@{entry['candidate']}#"
-        if b is None or b["stale"] or not (b["voice_id"] or "").startswith(prefix):
+        if b is None or b["stale"] or b["anchor"] != entry["candidate"]:
             out.append(npc)
     return out[:limit] if limit else out
 
@@ -580,24 +578,33 @@ def drop_stale(conn: sqlite3.Connection, lock_data: dict) -> int:
 
 
 def store(conn: sqlite3.Connection, npc: Npc, arch: ArchRef, ch: Choice, roll: int, out_dir: Path,
-          strategy: str) -> str:
+          strategy: str) -> str | None:
+    """Write the NPC's anchor, voices row and voice_builds row. A leftover whose best candidate still fails the
+    gate (it doesn't sound like the approved Archetype) gets no own voice: it keeps speaking with the Archetype anchor,
+    which is safe for character. Returns the voice id, or None in that case."""
     c = ch.cand
+    own = ch.ok or not c.reasons
     path = out_dir / arch.id / f"{c.tag}.wav"
-    write_wav(path, c.samples, c.rate)
-    vid = npc_voice_id(arch, c.tag)
+    vid = npc_voice_id(arch, c.tag) if own else None
+    detail = ch.detail if own else f"{ch.detail}; speaks with the Archetype anchor"
     old = conn.execute("SELECT ref_clip FROM voices WHERE npc_id = ?", (npc.id,)).fetchone()
+    if own:
+        write_wav(path, c.samples, c.rate)
     with conn:
-        conn.execute("INSERT OR REPLACE INTO voices (npc_id, voice_id, archetype, prompt, ref_clip, embedding)"
-                     " VALUES (?, ?, ?, ?, ?, ?)",
-                     (npc.id, vid, arch.id, c.prompt, str(path.resolve()), speaker.to_blob(c.embedding)))
+        if own:
+            conn.execute("INSERT OR REPLACE INTO voices (npc_id, voice_id, archetype, prompt, ref_clip, embedding)"
+                         " VALUES (?, ?, ?, ?, ?, ?)",
+                         (npc.id, vid, arch.id, c.prompt, str(path.resolve()), speaker.to_blob(c.embedding)))
+        else:
+            conn.execute("DELETE FROM voices WHERE npc_id = ?", (npc.id,))
         conn.execute(
-            "INSERT OR REPLACE INTO voice_builds (npc_id, roll, attempt, strategy, seed, params, archetype_sim,"
+            "INSERT OR REPLACE INTO voice_builds (npc_id, anchor, roll, attempt, strategy, seed, params, archetype_sim,"
             " neighbour_sim, neighbour, f0, hnr, wer, tried, status, issue, detail, stale, updated_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
-            (npc.id, roll, ch.attempt, c.params.get("strategy", strategy), c.seed, json.dumps(c.params),
-             round(c.arch_sim, 4), None if c.neighbour is None else round(c.nmax, 4), c.neighbour, c.f0, c.hnr,
-             c.wer, ch.tried, "ok" if ch.ok else "leftover", ch.issue, ch.detail, _now()))
-    if old and old[0] and old[0] != str(path.resolve()):
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
+            (npc.id, arch.candidate, roll, ch.attempt, c.params.get("strategy", strategy), c.seed,
+             json.dumps(c.params), round(c.arch_sim, 4), None if c.neighbour is None else round(c.nmax, 4),
+             c.neighbour, c.f0, c.hnr, c.wer, ch.tried, "ok" if ch.ok else "leftover", ch.issue, detail, _now()))
+    if old and old[0] and (not own or old[0] != str(path.resolve())):
         Path(old[0]).unlink(missing_ok=True)
     update_sims(conn, npc.id)
     return vid
@@ -649,7 +656,7 @@ def build(conn: sqlite3.Connection, lock_data: dict, out_dir: Path, *, cfg: Conf
             s.nsims.append(ch.cand.nmax)
         c = ch.cand
         log(f"NPC {npc.id} {npc.name} [{npc.archetype}] {'ok' if ch.ok else 'LEFTOVER ' + (ch.detail or '')}:"
-            f" {vid.split('#')[1]} arch {c.arch_sim:.3f}"
+            f" {vid.split('#')[1] if vid else 'Archetype anchor'} arch {c.arch_sim:.3f}"
             + (f" nearest Neighbour {c.neighbour} {c.nmax:.3f}" if c.neighbour is not None else "")
             + f" f0 {c.f0} hnr {c.hnr} ({ch.tried} candidates)")
     return s
