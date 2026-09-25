@@ -2,6 +2,7 @@
 import type { Database } from "bun:sqlite";
 import { LEXICON_ACTIONS, LexiconActionError, validateLexiconAction } from "./lexicon";
 import { APPROVAL_ACTIONS, runState } from "./queries";
+import { SEPARATION_ACTIONS, validateSeparation } from "./separation";
 
 export const LINE_ACTIONS = ["retry-line", "skip-line", "edit-tts-text"] as const;
 export const RUN_ACTIONS = ["pause-run", "resume-run", "set-until"] as const;
@@ -99,6 +100,8 @@ export function validate(read: Database, req: ActionRequest, now: Date = new Dat
       throw e;
     }
   }
+  // Separation page: re-roll an NPC Voice, consumed by `vo voices`.
+  if ((SEPARATION_ACTIONS as readonly string[]).includes(action)) return validateSeparation(read, action, req.target);
 
   throw new ActionError(`unknown action ${JSON.stringify(action)}`);
 }

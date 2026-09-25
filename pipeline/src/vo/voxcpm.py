@@ -96,23 +96,35 @@ def engine() -> VoxCPM2:
 
 
 class Backend:
-    """`vo run`'s TTS backend for NPC lines. A voice is `<archetype>@<candidate>` (see lock.voice_id); the anchor,
-    transcript, mode and effect chain come from approved_voices.json, so a changed anchor is a new voice id and
-    requeues its lines. Delivery (per line type) isn't applied: continuation copies the anchor's delivery."""
+    """`vo run`'s TTS backend for NPC lines. A voice is `<archetype>@<candidate>` (the Archetype anchor, see
+    lock.voice_id) or `<archetype>@<candidate>#<tag>` (an NPC's own anchor, see vo.voices: the file
+    <voices dir>/<archetype>/<tag>.wav, which reads the Archetype's anchor line). The transcript, mode and effect chain
+    come from approved_voices.json, so a changed Archetype anchor is a new voice id and requeues its lines. Delivery
+    (per line type) isn't applied: continuation copies the anchor's delivery."""
 
-    def __init__(self, engine_: VoxCPM2 | None = None, lock_data: dict | None = None):
-        self._engine, self._lock = engine_, lock_data
+    def __init__(self, engine_: VoxCPM2 | None = None, lock_data: dict | None = None, voices_dir: Path | None = None):
+        self._engine, self._lock, self._voices = engine_, lock_data, voices_dir
 
     def _entry(self, voice: str) -> dict:
         from vo import lock
 
         data = self._lock if self._lock is not None else lock.load(lock.path())
         self._lock = data
-        aid, _, cand = voice.partition("@")
+        base, _, tag = voice.partition("#")
+        aid, _, cand = base.partition("@")
         entry = data["archetypes"].get(aid)
         if entry is None or entry["candidate"] != cand:
             raise ValueError(f"voice {voice!r} is not an approved anchor in approved_voices.json")
-        return entry
+        if not tag:
+            return entry
+        import os
+
+        from vo import voices
+        root = self._voices or Path(os.environ.get(voices.VOICE_ENV) or voices.default_dir())
+        anchor = root / aid / f"{tag}.wav"
+        if not anchor.exists():
+            raise ValueError(f"NPC anchor {anchor} missing: run `vo voices`")
+        return {**entry, "anchor": str(anchor)}
 
     def render(self, text: str, voice: str, seed: int, delivery=None) -> tuple[np.ndarray, int]:
         from vo import effects

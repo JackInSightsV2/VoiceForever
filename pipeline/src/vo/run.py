@@ -129,8 +129,9 @@ def _edit_tts_text(conn: sqlite3.Connection, action: sqlite3.Row) -> None:
 
 
 # Approval actions (approve/reject a Candidate, regenerate an Archetype, accept/correct a Lexicon name) belong to
-# `vo prepare` and are left for it.
+# `vo prepare`, and NPC Voice re-rolls (the Separation page) to `vo voices`; both are left for them.
 PREPARE_ACTIONS = ("approve-candidate", "reject-candidate", "regenerate-archetype", "accept-lexicon", "correct-lexicon")
+VOICES_ACTIONS = ("reroll-voice",)
 ACTIONS: dict[str, Callable[[sqlite3.Connection, sqlite3.Row], None]] = {
     "retry-line": _retry_line,
     "skip-line": _skip_line,
@@ -178,7 +179,7 @@ def consume_actions(conn: sqlite3.Connection, log: Callable[[str], None] = print
     n = 0
     for action in conn.execute("SELECT * FROM review_actions WHERE consumed_at IS NULL ORDER BY id").fetchall():
         name, tag = action["action"], f"review action {action['id']} ({action['action']} {action['target']})"
-        if (name in RUN_ACTIONS and control is None) or name in PREPARE_ACTIONS:
+        if (name in RUN_ACTIONS and control is None) or name in PREPARE_ACTIONS or name in VOICES_ACTIONS:
             continue
         if name not in ACTIONS and name not in RUN_ACTIONS:
             log(f"review action {action['id']}: {name!r} not supported yet, left queued")

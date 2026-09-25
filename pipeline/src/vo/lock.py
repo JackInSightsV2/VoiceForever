@@ -4,7 +4,7 @@ Written by `vo prepare` once every Archetype has an approved anchor (removed aga
 disk. Maps each Archetype to its anchor (audio path, transcript, description, seed, continuation mode, effect chain)
 and fixes the Narrator. With an anchor chain (vo.effects), `anchor` is the processed clip (`raw_anchor` the design
 it came from, `anchor_chain` the chain): lines continue from the processed clip and are not processed again. `vo run` refuses to start without it, and speaks every NPC line as a VoxCPM2 continuation
-of the NPC's Archetype anchor.
+of the NPC's own anchor (vo.voices), or of its Archetype anchor while it has none.
 """
 from __future__ import annotations
 
@@ -89,7 +89,7 @@ def npc_voice_ids(conn: sqlite3.Connection, data: dict) -> dict[int, str]:
     """{npc id: voice id}: its Archetype's anchor, or the Narrator for races mapped to it. NPCs whose Archetype
     isn't in the lock are left out (they fall back to `vo run`'s default voice).
 
-    Per-NPC anchors (#13) will take precedence through `voices.voice_id`, which `vo run` already prefers."""
+    An NPC's own anchor (#13, `vo voices`) takes precedence through `voices.voice_id`, which `vo run` prefers."""
     narrator = data.get("narrator", {}).get("voice_id")
     out = {}
     for npc, aid in archetypes.npc_archetypes(conn).items():
