@@ -2869,6 +2869,7 @@ dependencies = [
     { name = "lupa" },
     { name = "misaki", extra = ["en"] },
     { name = "mlx-audio" },
+    { name = "praat-parselmouth" },
     { name = "transformers" },
 ]
 
@@ -2891,6 +2892,7 @@ requires-dist = [
     { name = "lupa", specifier = ">=2.8" },
     { name = "misaki", extras = ["en"], specifier = ">=0.9.4" },
     { name = "mlx-audio", specifier = ">=0.5.6" },
+    { name = "praat-parselmouth", specifier = ">=0.4" },
     { name = "transformers", specifier = ">=5" },
 ]
 

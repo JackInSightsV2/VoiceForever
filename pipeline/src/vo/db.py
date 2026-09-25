@@ -61,6 +61,29 @@ CREATE TABLE IF NOT EXISTS runs (
 );
 -- Line flags for review, e.g. Capture text whose player name couldn't be re-tokenised.
 CREATE TABLE IF NOT EXISTS line_issues (line_id INTEGER, issue TEXT, detail TEXT);
+-- Approval Gate (vo prepare, the dashboard's Approval page). One row per Archetype, plus the fixed Narrator
+-- (kind 'narrator'). description = base_description (race style guide) + notes (JSON list, from "Regenerate with
+-- note"). generation is bumped by each regenerate and seeds a fresh batch. approved = the Anchor's candidate id.
+CREATE TABLE IF NOT EXISTS archetypes (
+  id TEXT PRIMARY KEY, label TEXT, kind TEXT, gender TEXT,
+  races TEXT, npcs INTEGER, lines INTEGER,
+  base_description TEXT, notes TEXT, description TEXT, anchor_text TEXT, mode TEXT, effect_chain TEXT,
+  generation INTEGER NOT NULL DEFAULT 0, approved TEXT, approved_at TEXT, updated_at TEXT
+);
+-- A Candidate anchor: VoxCPM2 voice design of the Archetype's anchor line. id is "<archetype>/g<gen>s<i>".
+-- status: pending | approved | rejected | superseded (an older generation).
+CREATE TABLE IF NOT EXISTS candidates (
+  id TEXT PRIMARY KEY, archetype TEXT NOT NULL, generation INTEGER, seed INTEGER,
+  description TEXT, anchor_text TEXT, path TEXT, duration_s REAL,
+  f0 REAL, hnr REAL, centroid REAL, asr TEXT, wer REAL,
+  status TEXT NOT NULL DEFAULT 'pending', created_at TEXT, reviewed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS candidates_archetype ON candidates (archetype);
+-- Sample lines per Candidate, rendered as continuation from its anchor, as vo run would.
+CREATE TABLE IF NOT EXISTS candidate_samples (
+  candidate TEXT, idx INTEGER, line_id INTEGER, text TEXT, path TEXT, duration_s REAL, asr TEXT, wer REAL,
+  PRIMARY KEY (candidate, idx)
+);
 -- A line's previous text, kept when Capture (Drift) replaces it.
 CREATE TABLE IF NOT EXISTS line_history (
   line_id INTEGER, raw_text TEXT, tts_text TEXT, text_hash TEXT, reason TEXT, capture_id INTEGER,

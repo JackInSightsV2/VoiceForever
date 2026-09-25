@@ -5,19 +5,20 @@ supports and ignores the rest. What is actually applied today:
 
 - Kokoro: `speed` only (it has no emotion control). Completion is rendered slightly faster (more upbeat); progress and
   everything else at normal speed.
+- VoxCPM2 (NPC lines): nothing. A line continues from its Archetype anchor and copies the anchor's delivery.
 - `exaggeration` and `cfg_weight` are Chatterbox-style knobs held for later backends; no backend reads them yet.
 """
 from dataclasses import asdict, dataclass
 from functools import cache
-from typing import Protocol
+from typing import Callable, Protocol
 
 import numpy as np
 
 DEFAULT_VOICE = "am_michael"
 DEFAULT_VOICE_ID = f"kokoro:{DEFAULT_VOICE}"
-# The Narrator: one fixed voice for Quest Text from objects and items (lines with no NPC). A stock Kokoro voice,
-# distinct from the NPC default, until the Approval Gate approves a Narrator and replaces this.
-NARRATOR_VOICE_ID = "kokoro:bm_george"
+# The Narrator: one fixed voice for Quest Text from objects and items (lines with no NPC). Decided in the bake-off
+# (#10 round 1, 6/6): Kokoro bm_lewis. Outside the Approval Gate; the Approval page shows it as already decided.
+NARRATOR_VOICE_ID = "kokoro:bm_lewis"
 
 
 @dataclass(frozen=True)
@@ -72,7 +73,14 @@ class Kokoro:
         return audio, model.sample_rate
 
 
-BACKENDS: dict[str, type] = {"kokoro": Kokoro}
+def _voxcpm():
+    from vo.voxcpm import Backend
+    return Backend()
+
+
+# NPC lines: VoxCPM2 continuation from the Archetype anchor (`voxcpm:<archetype>@<candidate>`, ADR-0004).
+# The Narrator: Kokoro.
+BACKENDS: dict[str, type | Callable[[], TTSBackend]] = {"kokoro": Kokoro, "voxcpm": _voxcpm}
 
 
 def split_voice_id(voice_id: str) -> tuple[str, str]:
