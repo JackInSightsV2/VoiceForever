@@ -43,6 +43,15 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--import-bakeoff", action="append", metavar="ARCHETYPE",
                    help="seed this Archetype's Candidates from the bake-off anchors (vo.bakeoff_seeds), with their"
                         " anchor chain, and render their sample lines; implies --archetype (repeatable), e.g. orc_m")
+    p.add_argument("--import-gamevoice", action="store_true",
+                   help="add game voice Candidates (ADR-0007): anchors built from WoW's own NPC voice clips, one per"
+                        " distinct speaker (up to 8), for every Archetype rendered (--archetype, else all)")
+    p.add_argument("--gamevoice-dir", type=Path, default=DATA / "gamevoice",
+                   help="game voice cache: downloaded clips, transcripts, anchors (default data/gamevoice)")
+    p.add_argument("--listfile", type=Path, default=DATA / "community-listfile.csv",
+                   help="community listfile (FileDataID;path), to find the NPC voice clips")
+    p.add_argument("--gamevoice-mode", choices=("cont", "ultimate"), default=None,
+                   help="continuation mode of game voice Candidates (default: vo.prepare.GAMEVOICE_MODE)")
     p.add_argument("--design", action="store_true",
                    help="render fresh voice-design Candidates even for Archetypes seeded from the bake-off (orc_m)")
     p.add_argument("--watch", action="store_true",
@@ -167,7 +176,9 @@ def main(argv: list[str] | None = None) -> None:
             return
         kw = dict(only=args.archetype, candidates=args.candidates, samples=args.samples,
                   asr_model=args.asr_model or asr.DEFAULT_MODEL, design=args.design, import_bakeoff=args.import_bakeoff,
-                  lock_path=lock.path(), lexicon_path=lexicon.path(), areas=_areas(args.world))
+                  lock_path=lock.path(), lexicon_path=lexicon.path(), areas=_areas(args.world),
+                  import_gamevoice=args.import_gamevoice, gamevoice_root=args.gamevoice_dir, listfile=args.listfile,
+                  gamevoice_mode=args.gamevoice_mode or prepare.GAMEVOICE_MODE)
         try:
             if args.watch:
                 try:
