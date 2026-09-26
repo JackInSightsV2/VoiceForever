@@ -332,6 +332,7 @@ function wireLine(el) {
 
 const openArch = new Set(); // expanded Archetype cards survive live re-renders
 let archFilter = "open";
+let maxBase = 8; // Base Voices per Archetype (the snapshot's progress.max_base_voices)
 const pct = (n) => (n == null ? "–" : `${Math.round(n * 100)}%`);
 
 const approvalOpen = (d) => d.progress.total - d.progress.approved + (d.lexicon ? d.lexicon.progress.total - d.lexicon.progress.reviewed : 0);
@@ -339,19 +340,23 @@ const approvalOpen = (d) => d.progress.total - d.progress.approved + (d.lexicon 
 function renderApproval(d) {
   const p = d.progress;
   $("#nav-a").textContent = approvalOpen(d) || "";
-  const shown = d.archetypes.filter((a) => archFilter === "all" || (archFilter === "open" ? !a.approved : a.approved));
+  maxBase = p.max_base_voices || 8;
+  const shown = d.archetypes.filter((a) => archFilter === "all" || (archFilter === "open" ? !a.approved_count : a.approved_count));
   const n = d.narrator;
-  main.innerHTML = `<h1>Approval <span class="muted">(${p.approved} / ${p.total} Archetypes approved)</span></h1>
-  <p class="muted">Pick each Archetype's Anchor by ear: the Candidate with the right character, which still holds up over
-  its sample lines (each is a continuation of that anchor, as <span class=mono>vo run</span> will speak every line).
+  main.innerHTML = `<h1>Approval <span class="muted">(${p.approved} / ${p.total} Archetypes approved · ${p.base_voices} Base Voices)</span></h1>
+  <p class="explainer"><b>Approve every candidate you'd be happy to hear as an NPC of this race — each becomes a different
+  base voice; NPCs are spread across them, near neighbours getting different ones.</b> Up to ${maxBase} per Archetype.</p>
+  <p class="muted">Judge each Candidate by ear: the right character, holding up over its sample lines (each is a
+  continuation of that anchor, as <span class=mono>vo run</span> will speak every line). Approve again to toggle it off.
   Actions are queued; <span class=mono>vo prepare</span> applies them, re-renders regenerated Archetypes, and writes
-  <span class=mono>approved_voices.json</span> once all are approved.</p>
+  <span class=mono>approved_voices.json</span> once every Archetype has at least one approved.</p>
   <section class="card">
     <div class="bar" role="img" aria-label="Approved Archetypes">
       <span class="s-done" style="flex:${p.approved}"></span><span class="s-pending" style="flex:${p.total - p.approved || (p.total ? 0 : 1)}"></span>
     </div>
-    <div class="legend"><span><i class="sw s-done"></i>approved <b>${p.approved}</b></span>
+    <div class="legend"><span><i class="sw s-done"></i>Archetypes with an approval <b>${p.approved}</b></span>
       <span><i class="sw s-pending"></i>open <b>${p.total - p.approved}</b></span>
+      <span>Base Voices approved <b>${p.base_voices}</b></span>
       ${p.queued_approvals ? `<span>approvals queued for <span class=mono>vo prepare</span> <b>${p.queued_approvals}</b></span>` : ""}
       <span>${d.complete ? "All approved: <b>vo prepare</b> writes both locks, then <b>vo run</b> can start." : "<span class=mono>vo run</span> is locked until every Archetype and every top Lexicon name is approved."}</span>
     </div>
@@ -385,6 +390,7 @@ function renderApproval(d) {
     b.addEventListener("click", () => {
       const { a, target } = b.dataset;
       if (a === "approve") act("approve-candidate", target);
+      if (a === "unapprove") act("unapprove-candidate", target);
       if (a === "reject") act("reject-candidate", target);
       if (a === "regen") {
         const note = main.querySelector(`textarea[data-note="${CSS.escape(target)}"]`).value.trim();
@@ -396,12 +402,11 @@ function renderApproval(d) {
 }
 
 function archCard(a) {
-  const approved = a.approved ? a.candidates.find((c) => c.id === a.approved) : null;
   const races = Object.entries(a.races).map(([r, k]) => `${esc(r)} (${k})`).join(", ");
   const queued = a.queued.map((q) => `<span class="queued">queued: ${esc(q.action.replace("-candidate", "").replace("-archetype", ""))} ${esc(q.action === "regenerate-archetype" ? q.note || "" : q.target.split("/")[1])}</span>`).join("");
-  const status = a.approved
-    ? `<span class="tag ok">approved ${esc(a.approved.split("/")[1])}</span>`
-    : `<span class="tag">${a.candidates.filter((c) => c.status !== "rejected").length} candidates</span>`;
+  const after = a.approved_after_queue !== a.approved_count ? ` <span class="queued">→ ${a.approved_after_queue} after vo prepare</span>` : "";
+  const status = `<span class="tag ${a.approved_count ? "ok" : ""}">${a.approved_count} approved</span>${after}
+    <span class="tag">${a.candidates.filter((c) => c.status !== "rejected").length} candidates</span>`;
   const notes = a.notes.length ? ` <span class="note">${a.notes.map(esc).join(". ")}.</span>` : "";
   return `<details class="card arch" data-id="${esc(a.id)}" ${openArch.has(a.id) ? "open" : ""}>
     <summary class="ahead"><b>${esc(a.label)}</b><span class="mono muted">${esc(a.id)}</span>${status}
@@ -411,7 +416,7 @@ function archCard(a) {
     <p class="desc">${esc(a.base_description)}${notes}</p>
     <div class="muted small">Anchor line: <i>${esc(a.anchor_text)}</i> · continuation <span class=mono>${esc(a.mode)}</span>
       · generation ${a.generation}${a.superseded ? ` (${a.superseded} superseded)` : ""}${a.anchor_chain ? ` · anchor effect chain <span class=mono>${esc(a.anchor_chain)}</span> (applied once to each anchor; lines continue from the processed clip)` : ""}${a.effect_chain ? ` · per-line effect chain <span class=mono>${esc(a.effect_chain)}</span>` : ""}</div>
-    ${approved ? `<div class="muted small">Approved ${when(a.approved_at)}.</div>` : ""}
+    ${a.approved_count ? `<div class="muted small">Base Voices: ${a.approved.map((id) => `<span class=mono>${esc(id.split("/")[1])}</span>`).join(", ")} · last approved ${when(a.approved_at)}.</div>` : ""}
     ${a.candidates.length ? `<div class="cands">${a.candidates.map((c) => candCard(a, c)).join("")}</div>` : `<div class="empty">No Candidates yet: run <span class=mono>vo prepare --archetype ${esc(a.id)}</span>.</div>`}
     <div class="regen">
       <textarea data-note="${esc(a.id)}" rows="2" placeholder="Note for a regenerate, e.g. deeper, less theatrical (appended to the description)"></textarea>
@@ -421,7 +426,8 @@ function archCard(a) {
 }
 
 function candCard(a, c) {
-  const on = c.id === a.approved;
+  const on = c.will_be_approved; // approved, or will be once vo prepare applies the queue
+  const full = !on && a.approved_after_queue >= maxBase;
   const qd = a.queued.filter((q) => q.target === c.id).map((q) => q.action);
   const metric = (label, v, unit = "") => `<span title="${label}"><span class="muted">${label}</span> ${v == null ? "–" : esc(v) + unit}</span>`;
   return `<div class="cand ${c.status}${on ? " picked" : ""}">
@@ -441,7 +447,9 @@ function candCard(a, c) {
       )
       .join("")}
     <div class="qactions">
-      <button class="primary" data-a="approve" data-target="${esc(c.id)}" ${on ? "disabled" : ""}>${on ? "Approved" : "Approve"}</button>
+      ${on
+        ? `<button class="on" data-a="unapprove" data-target="${esc(c.id)}" title="Approved: click to withdraw">Unapprove</button>`
+        : `<button class="primary" data-a="approve" data-target="${esc(c.id)}" ${full ? `disabled title="${maxBase} Base Voices already: unapprove one first"` : ""}>Approve</button>`}
       <button class="danger" data-a="reject" data-target="${esc(c.id)}" ${c.status === "rejected" ? "disabled" : ""}>Reject</button>
     </div>
   </div>`;
@@ -694,8 +702,8 @@ function renderNpc(d) {
   const anchor = v.own
     ? `<div class="sample"><div class="slabel"><span class="muted">NPC anchor</span><span class="stext" title="${esc(v.prompt || "")}">${esc(v.prompt || "")}</span></div>
        ${v.anchor_url ? `<audio controls preload="none" src="${esc(v.anchor_url)}"></audio>` : `<span class="muted">anchor file missing</span>`}</div>`
-    : `<div class="sample"><div class="slabel"><span class="muted">Archetype anchor${v.archetype ? ` · ${esc(v.archetype.label)}` : ""}</span>
-       <span class="stext">No NPC Voice yet: speaks with its Archetype's anchor until <span class=mono>vo voices</span> builds one.</span></div>
+    : `<div class="sample"><div class="slabel"><span class="muted">Base Voice${v.archetype ? ` · ${esc(v.archetype.label)}${v.archetype.approved ? ` <span class=mono>${esc(v.archetype.approved.split("/")[1])}</span> (1 of ${v.archetype.base_voices})` : ""}` : ""}</span>
+       <span class="stext">No NPC Voice yet: speaks with its Base Voice (one of its Archetype's approved anchors) until <span class=mono>vo voices</span> builds one.</span></div>
        ${v.archetype?.anchor_url ? `<audio controls preload="none" src="${esc(v.archetype.anchor_url)}"></audio>` : `<span class="muted">${v.archetype?.approved ? "anchor file missing" : "Archetype not approved yet"}</span>`}</div>`;
   const b = v.build;
   main.innerHTML = `<h1><a href="/npcs">NPC browser</a> <span class="muted">/</span> ${esc(n.name || `NPC ${n.id}`)}${n.subname ? ` <span class="muted">&lt;${esc(n.subname)}&gt;</span>` : ""}</h1>

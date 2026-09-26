@@ -115,7 +115,8 @@ details summary { cursor: pointer; color: var(--muted); font-size: 12.5px; }
 .note { background: color-mix(in srgb, var(--warning) 25%, transparent); border-radius: 3px; padding: 0 3px; }
 .cands { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); margin-top: 12px; }
 .cand { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: grid; gap: 6px; background: var(--bg); min-width: 0; }
-.cand.picked { border-color: var(--good); box-shadow: 0 0 0 1px var(--good); }
+.cand.picked { border-color: var(--good); box-shadow: 0 0 0 1px var(--good); background: color-mix(in srgb, var(--good) 6%, var(--bg)); }
+.explainer { margin: 0 0 8px; padding: 8px 12px; border-left: 3px solid var(--good); background: var(--surface); border-radius: 4px; }
 .cand.rejected { opacity: .5; }
 .cand audio { width: 100%; height: 32px; }
 .chead { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }

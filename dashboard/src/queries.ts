@@ -208,7 +208,29 @@ export function quarantine(db: Database, audioRoot: string) {
 
 // --- Approval ------------------------------------------------------------------------------------------------------
 
-export const APPROVAL_ACTIONS = ["approve-candidate", "reject-candidate", "regenerate-archetype"] as const;
+export const APPROVAL_ACTIONS = ["approve-candidate", "unapprove-candidate", "reject-candidate", "regenerate-archetype"] as const;
+/** Approved Candidates (Base Voices) an Archetype may have (vo.basevoices.MAX, ADR-0006). */
+export const MAX_BASE_VOICES = 8;
+
+/** An Archetype's Base Voices as they will be once `vo prepare` applies the queued approve / unapprove / reject
+ * actions: the approved Candidates, with the queue replayed in order. */
+export function approvedAfterQueue(db: Database, archetype: string): Set<string> {
+  const ids = new Set(
+    (db.query("SELECT id FROM candidates WHERE archetype = ? AND status = 'approved'").all(archetype) as Row[]).map((r) => r.id),
+  );
+  const queued = db
+    .query(
+      `SELECT r.action, r.target FROM review_actions r JOIN candidates c ON c.id = r.target
+       WHERE r.consumed_at IS NULL AND c.archetype = ?
+       AND r.action IN ('approve-candidate', 'unapprove-candidate', 'reject-candidate') ORDER BY r.id`,
+    )
+    .all(archetype) as Row[];
+  for (const q of queued) {
+    if (q.action === "approve-candidate" && ids.size < MAX_BASE_VOICES) ids.add(q.target);
+    else if (q.action !== "approve-candidate") ids.delete(q.target);
+  }
+  return ids;
+}
 
 const parseJson = (s: string | null, fallback: any) => {
   try {
@@ -260,29 +282,35 @@ export function approval(db: Database, candidatesRoot: string) {
       };
       continue;
     }
-    const current = mine.filter((c) => c.status !== "superseded" && (c.generation === a.generation || c.id === a.approved));
+    const current = mine.filter((c) => c.status !== "superseded" && (c.generation === a.generation || c.status === "approved"));
+    const approved = mine.filter((c) => c.status === "approved").map((c) => c.id).sort();
+    const willBe = approvedAfterQueue(db, a.id);
     out.push({
       id: a.id, label: a.label, kind: a.kind, gender: a.gender, races: parseJson(a.races, {}), npcs: a.npcs, lines: a.lines,
       base_description: a.base_description, notes: parseJson(a.notes, []), description: a.description,
       anchor_text: a.anchor_text, mode: a.mode, effect_chain: a.effect_chain, anchor_chain: a.anchor_chain ?? null,
       generation: a.generation,
-      approved: a.approved, approved_at: a.approved_at,
+      // Base Voices: the approved Candidates (several per Archetype), and how many there will be after the queue.
+      approved, approved_count: approved.length, approved_after_queue: willBe.size, approved_at: a.approved_at,
       superseded: mine.length - current.length,
       candidates: current.map((c) => ({
         id: c.id, seed: c.seed, generation: c.generation, status: c.status, url: url(c.path), duration_s: c.duration_s,
+        approved: c.status === "approved", will_be_approved: willBe.has(c.id),
         label: c.label ?? null, anchor_chain: c.anchor_chain ?? null, raw_url: url(c.raw_path ?? null),
         f0: c.f0, hnr: c.hnr, centroid: c.centroid, asr: c.asr, wer: c.wer, samples: samplesBy.get(c.id) ?? [],
       })),
       queued: queuedFor(a.id),
     });
   }
-  const approved = out.filter((a) => a.approved).length;
-  const queuedApprovals = out.filter((a) => !a.approved && a.queued.some((q: Row) => q.action === "approve-candidate")).length;
+  // An Archetype is approved with at least one Base Voice.
+  const approved = out.filter((a) => a.approved_count > 0).length;
+  const baseVoices = out.reduce((n, a) => n + a.approved_count, 0);
+  const queuedApprovals = out.filter((a) => !a.approved_count && a.queued.some((q: Row) => q.action === "approve-candidate")).length;
   const voicesComplete = out.length > 0 && approved === out.length;
   const lexicon = lexiconSnapshot(db, url);
   return {
     narrator,
-    progress: { approved, total: out.length, queued_approvals: queuedApprovals },
+    progress: { approved, total: out.length, base_voices: baseVoices, queued_approvals: queuedApprovals, max_base_voices: MAX_BASE_VOICES },
     voices_complete: voicesComplete,
     complete: voicesComplete && lexicon.complete, // the Approval Gate needs both locks
     archetypes: out,

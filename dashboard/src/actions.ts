@@ -1,7 +1,7 @@
 // Write side: the dashboard's only writes are review_actions rows, consumed by `vo run`. It never touches audio.
 import type { Database } from "bun:sqlite";
 import { LEXICON_ACTIONS, LexiconActionError, validateLexiconAction } from "./lexicon";
-import { APPROVAL_ACTIONS, runState } from "./queries";
+import { APPROVAL_ACTIONS, MAX_BASE_VOICES, approvedAfterQueue, runState } from "./queries";
 import { SEPARATION_ACTIONS, validateSeparation } from "./separation";
 import { RATING_ACTIONS, validateRating } from "./spotcheck";
 
@@ -73,12 +73,24 @@ export function validate(read: Database, req: ActionRequest, now: Date = new Dat
     return { action, target, payload: null };
   }
 
-  // Approval Gate: consumed by `vo prepare` (approve/reject a Candidate; regenerate an Archetype with a note).
-  if (action === "approve-candidate" || action === "reject-candidate") {
+  // Approval Gate: consumed by `vo prepare` (approve / unapprove / reject a Candidate; regenerate an Archetype with a
+  // note). Approving adds a Base Voice (up to MAX_BASE_VOICES per Archetype); unapproving withdraws one.
+  if (action === "approve-candidate" || action === "unapprove-candidate" || action === "reject-candidate") {
     const id = typeof req.target === "string" ? req.target : "";
     const c = read.query("SELECT archetype, status FROM candidates WHERE id = ?").get(id) as Record<string, any> | null;
     if (!c || c.archetype === "narrator") throw new ActionError(`no candidate ${JSON.stringify(req.target)}`, 404);
+    const willBe = approvedAfterQueue(read, c.archetype);
+    if (action === "unapprove-candidate") {
+      if (!willBe.has(id)) throw new ActionError(`candidate ${id} is not approved`, 409);
+      return { action, target: id, payload: null };
+    }
     if (c.status === "superseded") throw new ActionError(`candidate ${id} was superseded by a regenerate`, 409);
+    if (action === "approve-candidate") {
+      if (willBe.has(id)) throw new ActionError(`candidate ${id} is already approved`, 409);
+      if (willBe.size >= MAX_BASE_VOICES) {
+        throw new ActionError(`${c.archetype} already has ${willBe.size} Base Voices (at most ${MAX_BASE_VOICES}); unapprove one first`, 409);
+      }
+    }
     return { action, target: id, payload: null };
   }
   if (action === "regenerate-archetype") {

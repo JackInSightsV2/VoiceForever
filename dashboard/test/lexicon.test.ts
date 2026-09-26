@@ -35,6 +35,7 @@ function lexiconFixture() {
   fx.db.run(
     `INSERT INTO archetypes (id, label, kind, lines, approved) VALUES ('human_m', 'Human, male', 'race', 10, 'human_m/g0s0')`,
   );
+  fx.db.run(`INSERT INTO candidates (id, archetype, generation, status) VALUES ('human_m/g0s0', 'human_m', 0, 'approved')`);
   return { ...fx, cands };
 }
 

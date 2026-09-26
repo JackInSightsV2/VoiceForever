@@ -97,13 +97,20 @@ export function npcDetail(db: Database, id: number, roots: Roots) {
   const build = db
     .query("SELECT roll, attempt, strategy, archetype_sim, neighbour_sim, neighbour, status, issue, detail, updated_at FROM voice_builds WHERE npc_id = ?")
     .get(id) as Row | null;
-  // The Archetype anchor: the approved Candidate's clip (under /candidates/).
+  // The NPC's Base Voice: the approved Candidate of its Archetype it is built on (voice_builds.anchor), else the
+  // Archetype's first one; its clip is under /candidates/. An Archetype may have several (ADR-0006).
   const arch = n.archetype
     ? (db
         .query(
-          `SELECT a.id, a.label, a.approved, c.path FROM archetypes a LEFT JOIN candidates c ON c.id = a.approved WHERE a.id = ?`,
+          `SELECT a.id, a.label, c.id AS approved, c.path,
+                  (SELECT COUNT(*) FROM candidates WHERE archetype = a.id AND status = 'approved') AS base_voices
+           FROM archetypes a LEFT JOIN candidates c ON c.id = COALESCE(
+             (SELECT b.anchor FROM voice_builds b JOIN candidates x ON x.id = b.anchor AND x.status = 'approved'
+              WHERE b.npc_id = ?),
+             (SELECT MIN(id) FROM candidates WHERE archetype = a.id AND status = 'approved'))
+           WHERE a.id = ?`,
         )
-        .get(n.archetype) as Row | null)
+        .get(id, n.archetype) as Row | null)
     : null;
   const lines = db
     .query(
@@ -132,7 +139,7 @@ export function npcDetail(db: Database, id: number, roots: Roots) {
       own: n.own_voice,
       prompt: v?.prompt ?? null,
       anchor_url: n.own_voice ? audioUrl(roots.voices, v?.ref_clip ?? null, "/voices/") : null,
-      archetype: arch ? { id: arch.id, label: arch.label, approved: arch.approved, anchor_url: audioUrl(roots.candidates, arch.path ?? null, "/candidates/") } : null,
+      archetype: arch ? { id: arch.id, label: arch.label, approved: arch.approved, base_voices: arch.base_voices, anchor_url: audioUrl(roots.candidates, arch.path ?? null, "/candidates/") } : null,
       build,
       can_reroll: build !== null,
       ratings: tally(voiceId ? ratings(db, { voice: voiceId }) : []),

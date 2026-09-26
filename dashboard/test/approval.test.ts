@@ -55,7 +55,7 @@ describe("approval snapshot", () => {
   test("Archetypes, current Candidates with metrics and samples, the Narrator and progress", () => {
     const fx = approvalFixture();
     const d = approval(fx.db, fx.cands);
-    expect(d.progress).toEqual({ approved: 1, total: 2, queued_approvals: 0 });
+    expect(d.progress).toEqual({ approved: 1, total: 2, base_voices: 1, queued_approvals: 0, max_base_voices: 8 });
     expect(d.complete).toBe(false);
     expect(d.narrator).toMatchObject({ voice_id: "kokoro:bm_lewis", url: "/candidates/narrator/fixed.wav", lines: 721 });
     expect(d.archetypes.map((a: any) => a.id)).toEqual(["troll_m", "orc_f"]); // most lines first
@@ -71,7 +71,12 @@ describe("approval snapshot", () => {
       { idx: 1, line_id: 20, text: "You got dem feathers?", url: "/candidates/troll_m/g1s0_1.wav", duration_s: 3.2, asr: "you got them feathers", wer: 0 },
     ]);
     const orc = d.archetypes[1];
-    expect(orc.approved).toBe("orc_f/g0s1");
+    expect(orc.approved).toEqual(["orc_f/g0s1"]);
+    expect(orc.approved_count).toBe(1);
+    expect(orc.candidates.map((c: any) => [c.id, c.approved, c.will_be_approved])).toEqual([
+      ["orc_f/g0s0", false, false],
+      ["orc_f/g0s1", true, true],
+    ]);
     expect(orc.races).toEqual({ "Orc female": 48 });
   });
 
@@ -150,6 +155,67 @@ describe("approval actions", () => {
     expect(err({ action: "regenerate-archetype", target: "orc_f", payload: { note: 5 } }).status).toBe(400);
     expect(err({ action: "regenerate-archetype", target: "orc_f", payload: { note: "x".repeat(501) } }).status).toBe(400);
     expect(rows()).toEqual([]);
+  });
+});
+
+describe("Base Voices: approve toggles, several per Archetype", () => {
+  let fx: ReturnType<typeof approvalFixture>;
+  let ro: Database;
+  beforeEach(() => {
+    fx = approvalFixture();
+    ro = new Database(fx.path, { readonly: true });
+  });
+  const status = (req: any) => {
+    try {
+      insertAction(ro, fx.db, req);
+      return 201;
+    } catch (e) {
+      return (e as ActionError).status;
+    }
+  };
+  const orc = () => approval(fx.db, fx.cands).archetypes.find((a: any) => a.id === "orc_f");
+
+  test("approve adds a second Base Voice; unapprove withdraws one; the snapshot shows both after the queue", () => {
+    expect(status({ action: "approve-candidate", target: "orc_f/g0s0" })).toBe(201); // orc_f/g0s1 stays approved
+    expect(status({ action: "approve-candidate", target: "orc_f/g0s0" })).toBe(409); // already (queued)
+    expect(status({ action: "approve-candidate", target: "orc_f/g0s1" })).toBe(409); // already approved
+    let a = orc();
+    expect([a.approved_count, a.approved_after_queue]).toEqual([1, 2]);
+    expect(a.candidates.map((c: any) => c.will_be_approved)).toEqual([true, true]);
+
+    expect(status({ action: "unapprove-candidate", target: "orc_f/g0s1" })).toBe(201);
+    expect(status({ action: "unapprove-candidate", target: "orc_f/g0s1" })).toBe(409); // not approved any more
+    expect(status({ action: "unapprove-candidate", target: "troll_m/g1s0" })).toBe(409); // never approved
+    expect(status({ action: "unapprove-candidate", target: "narrator/fixed" })).toBe(404);
+    a = orc();
+    expect(a.candidates.map((c: any) => [c.id, c.will_be_approved])).toEqual([
+      ["orc_f/g0s0", true],
+      ["orc_f/g0s1", false],
+    ]);
+    // Toggling back before vo prepare runs: approve again after the unapprove.
+    expect(status({ action: "approve-candidate", target: "orc_f/g0s1" })).toBe(201);
+    expect(orc().approved_after_queue).toBe(2);
+    expect(fx.db.query("SELECT action, target FROM review_actions ORDER BY id").all()).toEqual([
+      { action: "approve-candidate", target: "orc_f/g0s0" },
+      { action: "unapprove-candidate", target: "orc_f/g0s1" },
+      { action: "approve-candidate", target: "orc_f/g0s1" },
+    ]);
+  });
+
+  test("progress counts Archetypes with an approval and every Base Voice; at most 8 per Archetype", () => {
+    for (let i = 2; i <= 8; i++) {
+      fx.db.run(
+        `INSERT INTO candidates (id, archetype, generation, seed, path, status) VALUES (?, 'orc_f', 0, ?, '', 'approved')`,
+        [`orc_f/g0s${i}`, i],
+      );
+    }
+    fx.db.run(`INSERT INTO candidates (id, archetype, generation, seed, path, status) VALUES ('orc_f/g0s9', 'orc_f', 0, 9, '', 'pending')`);
+    const d = approval(fx.db, fx.cands);
+    expect(d.progress).toMatchObject({ approved: 1, total: 2, base_voices: 8 });
+    expect(orc().approved).toHaveLength(8);
+    expect(status({ action: "approve-candidate", target: "orc_f/g0s9" })).toBe(409); // the ninth
+    expect(status({ action: "unapprove-candidate", target: "orc_f/g0s2" })).toBe(201);
+    expect(status({ action: "approve-candidate", target: "orc_f/g0s9" })).toBe(201); // room again
   });
 });
 
