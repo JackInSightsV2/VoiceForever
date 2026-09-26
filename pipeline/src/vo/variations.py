@@ -31,6 +31,8 @@ METHODS = ("style", "dsp")  # slot j of a request uses METHODS[j % 2]: 2 + 2 by 
 MAX_TRIES = 3
 MAX_WER = 0.3
 MAX_SIM = 0.97
+# WavLM barely hears pitch/formant (ADR-0005): a strong DSP shift sounds different but still scores ~0.98.
+MAX_SIM_DSP = 0.99
 STYLES = (
     "older, more weathered and gravelly",
     "younger and lighter",
@@ -109,9 +111,10 @@ class Verdict:
     reason: str
 
 
-def gate(wer: float, sim: float | None) -> Verdict:
+def gate(wer: float, sim: float | None, method: str = "style") -> Verdict:
     if wer > MAX_WER:
         return Verdict(False, f"misread (WER {wer:.0%} > {MAX_WER:.0%})")
-    if sim is not None and sim > MAX_SIM:
-        return Verdict(False, f"near-identical to the source (similarity {sim:.3f} > {MAX_SIM})")
+    limit = MAX_SIM_DSP if method == "dsp" else MAX_SIM
+    if sim is not None and sim > limit:
+        return Verdict(False, f"near-identical to the source (similarity {sim:.3f} > {limit})")
     return Verdict(True, "ok")

@@ -530,7 +530,7 @@ def _render_variation(conn, a, src, k: int, method: str, note: str | None, style
         heard = check.heard(wav)
         w = dialect_wer(transcript, heard)
         sim = round(speaker.cosine(embed(samples, rate), src_emb), 4) if src_emb is not None else None
-        verdict = variations.gate(w, sim)
+        verdict = variations.gate(w, sim, info.get("method", "style"))
         if not verdict.ok:
             log(f"variation {cid} try {attempt + 1} ({what}): dropped, {verdict.reason}")
             wav.unlink(missing_ok=True)
