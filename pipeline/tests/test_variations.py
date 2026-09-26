@@ -189,10 +189,10 @@ def test_failed_variations_are_retried_then_dropped(orc, tmp_path):
 
 
 def test_gate():
-    assert variations.gate(0.0, 0.985, "dsp").ok is True and variations.gate(0.0, 0.985).ok is False
+    assert variations.gate(0.0, 0.988, "dsp").ok is True and variations.gate(0.0, 0.988).ok is False
     assert variations.gate(0.31, 0.5).ok is False
     assert variations.gate(0.3, 0.97).ok is True
-    assert variations.gate(0.0, 0.971).ok is False
+    assert variations.gate(0.0, 0.986).ok is False
 
 
 def test_shift_directions_avoid_ones_taken():

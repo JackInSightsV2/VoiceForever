@@ -30,7 +30,7 @@ N = 4
 METHODS = ("style", "dsp")  # slot j of a request uses METHODS[j % 2]: 2 + 2 by default
 MAX_TRIES = 3
 MAX_WER = 0.3
-MAX_SIM = 0.97
+MAX_SIM = 0.985
 # WavLM barely hears pitch/formant (ADR-0005): a strong DSP shift sounds different but still scores ~0.98.
 MAX_SIM_DSP = 0.99
 STYLES = (
