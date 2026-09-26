@@ -331,7 +331,7 @@ function wireLine(el) {
 // --- Approval ---------------------------------------------------------------------------------------------------
 
 const openArch = new Set(); // expanded Archetype cards survive live re-renders
-let archFilter = "open";
+let archFilter = "all";
 let maxBase = 100; // Base Voices per Archetype (the snapshot's progress.max_base_voices)
 const pct = (n) => (n == null ? "–" : `${Math.round(n * 100)}%`);
 
