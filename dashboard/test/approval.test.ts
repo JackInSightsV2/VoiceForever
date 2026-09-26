@@ -101,6 +101,25 @@ describe("approval snapshot", () => {
     expect(troll.candidates.find((c: any) => c.id === "troll_m/g1s0")).toMatchObject({ label: null, anchor_chain: null, raw_url: null });
   });
 
+  test("game voice Candidates show their label, transcript and own mode", () => {
+    const fx = approvalFixture();
+    const wav = join(fx.cands, "troll_m/gamevoice/standard.wav");
+    mkdirSync(join(wav, ".."), { recursive: true });
+    writeFileSync(wav, "RIFF");
+    fx.db.run(
+      `INSERT INTO candidates (id, archetype, generation, seed, path, anchor_text, label, mode, status)
+       VALUES ('troll_m/gv-standard', 'troll_m', 1, 0, ?, 'Hey mon. Stay away from de voodoo.', 'game voice: standard',
+               'ultimate', 'pending')`,
+      [wav],
+    );
+    const troll = approval(fx.db, fx.cands).archetypes[0];
+    expect(troll.candidates.find((c: any) => c.id === "troll_m/gv-standard")).toMatchObject({
+      game_voice: true, label: "game voice: standard", anchor_text: "Hey mon. Stay away from de voodoo.", mode: "ultimate",
+      url: "/candidates/troll_m/gamevoice/standard.wav",
+    });
+    expect(troll.candidates.find((c: any) => c.id === "troll_m/g1s0")).toMatchObject({ game_voice: false, mode: null });
+  });
+
   test("queued actions show on their Archetype until vo prepare consumes them", () => {
     const fx = approvalFixture();
     const ro = new Database(fx.path, { readonly: true });
