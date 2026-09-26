@@ -210,7 +210,7 @@ export function quarantine(db: Database, audioRoot: string) {
 
 export const APPROVAL_ACTIONS = ["approve-candidate", "unapprove-candidate", "reject-candidate", "regenerate-archetype"] as const;
 /** Approved Candidates (Base Voices) an Archetype may have (vo.basevoices.MAX, ADR-0006). */
-export const MAX_BASE_VOICES = 8;
+export const MAX_BASE_VOICES = 100; // effectively uncapped: more Base Voices, more variety
 
 /** An Archetype's Base Voices as they will be once `vo prepare` applies the queued approve / unapprove / reject
  * actions: the approved Candidates, with the queue replayed in order. */

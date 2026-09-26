@@ -332,7 +332,7 @@ function wireLine(el) {
 
 const openArch = new Set(); // expanded Archetype cards survive live re-renders
 let archFilter = "open";
-let maxBase = 8; // Base Voices per Archetype (the snapshot's progress.max_base_voices)
+let maxBase = 100; // Base Voices per Archetype (the snapshot's progress.max_base_voices)
 const pct = (n) => (n == null ? "–" : `${Math.round(n * 100)}%`);
 
 const approvalOpen = (d) => d.progress.total - d.progress.approved + (d.lexicon ? d.lexicon.progress.total - d.lexicon.progress.reviewed : 0);
@@ -340,12 +340,12 @@ const approvalOpen = (d) => d.progress.total - d.progress.approved + (d.lexicon 
 function renderApproval(d) {
   const p = d.progress;
   $("#nav-a").textContent = approvalOpen(d) || "";
-  maxBase = p.max_base_voices || 8;
+  maxBase = p.max_base_voices || 100;
   const shown = d.archetypes.filter((a) => archFilter === "all" || (archFilter === "open" ? !a.approved_count : a.approved_count));
   const n = d.narrator;
   main.innerHTML = `<h1>Approval <span class="muted">(${p.approved} / ${p.total} Archetypes approved · ${p.base_voices} Base Voices)</span></h1>
   <p class="explainer"><b>Approve every candidate you'd be happy to hear as an NPC of this race — each becomes a different
-  base voice; NPCs are spread across them, near neighbours getting different ones.</b> Up to ${maxBase} per Archetype.</p>
+  base voice; NPCs are spread across them, near neighbours getting different ones.</b> Approve as many as you like: more is more variety; each one you reject is replaced by a fresh Candidate.</p>
   <p class="muted">Judge each Candidate by ear: the right character, holding up over its sample lines (each is a
   continuation of that anchor, as <span class=mono>vo run</span> will speak every line). Approve again to toggle it off.
   Actions are queued; <span class=mono>vo prepare</span> applies them, re-renders regenerated Archetypes, and writes

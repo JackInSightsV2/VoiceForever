@@ -22,7 +22,7 @@ from dataclasses import dataclass
 
 from vo import archetypes, lock, neighbours
 
-MAX = 8  # approved Candidates (Base Voices) per Archetype
+MAX = 100  # approved Candidates (Base Voices) per Archetype: effectively uncapped, more is more variety
 
 
 def plural(n: int) -> str:

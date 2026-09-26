@@ -37,6 +37,7 @@ from vo import archetypes, asr, audio, bakeoff_seeds, basevoices, effects, lexic
 DEFAULT_CANDIDATES = 8
 DEFAULT_SAMPLES = 3
 SEED_STRIDE = 1000  # generation g, candidate i -> seed g * SEED_STRIDE + i
+MAX_PER_GENERATION = 256  # renders per generation, replacements for rejected Candidates included
 NARRATOR_ID = "narrator"
 NARRATOR_CANDIDATE = "narrator/fixed"
 NARRATOR_NOTE = "Kokoro bm_lewis, fixed (bake-off round 1, #10). Not an NPC voice; outside the Approval Gate."
@@ -307,9 +308,16 @@ def _exists(path: str | None) -> bool:
 
 
 def _render_candidates(conn, a: sqlite3.Row, out: Path, engine: Engine, check: _Check, n: int, log) -> int:
+    """Keep `n` live (not rejected) Candidates in the current generation: each rejected one is replaced by a fresh
+    seed, up to MAX_PER_GENERATION renders per generation."""
     aid, gen = a["id"], a["generation"]
     done = 0
-    for i in range(n):
+    for i in range(MAX_PER_GENERATION):
+        live = sum(_exists(r[0]) for r in conn.execute(
+            "SELECT path FROM candidates WHERE archetype = ? AND generation = ? AND status != 'rejected' AND id LIKE ?",
+            (aid, gen, f"{aid}/g{gen}s%")))
+        if live >= n:
+            break
         cid = candidate_id(aid, gen, i)
         row = conn.execute("SELECT path FROM candidates WHERE id = ?", (cid,)).fetchone()
         if row is not None and _exists(row["path"]):

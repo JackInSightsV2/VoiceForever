@@ -206,7 +206,9 @@ def test_review_actions_approve_reject_regenerate(small, tmp_path):
     status = dict(small.execute("SELECT id, status FROM candidates").fetchall())
     assert status["orc_f/g0s1"] == "approved" and status["troll_m/g0s0"] == "rejected"
     assert small.execute("SELECT COUNT(*) FROM review_actions WHERE consumed_at IS NULL").fetchone()[0] == 1
-    assert eng.design_calls == []  # nothing new to render
+    # The rejected Candidate is replaced by a fresh seed; nothing else is rendered.
+    assert [d[2] for d in eng.design_calls] == [2]
+    assert status["troll_m/g0s2"] == "pending"
 
     # Regenerate with a note: appended to the description, a fresh generation with new seeds; the pending Candidates
     # are superseded, an approved one stays a Base Voice.
@@ -223,12 +225,12 @@ def test_review_actions_approve_reject_regenerate(small, tmp_path):
     assert status["orc_f/g0s0"] == "superseded" and status["orc_f/g0s1"] == "approved"
     assert status["orc_f/g1s0"] == "pending"
 
-    # Every Candidate of a generation rejected: the next prepare renders a new generation.
+    # Another reject: replaced again by the next fresh seed, in the same generation.
     _act(small, "reject-candidate", "troll_m/g0s1")
     eng = FakeEngine()
     _prepare(small, tmp_path, eng)
-    assert sorted(d[2] for d in eng.design_calls) == [1000, 1001]
-    assert small.execute("SELECT generation FROM archetypes WHERE id = 'troll_m'").fetchone()[0] == 1
+    assert sorted(d[2] for d in eng.design_calls) == [3]
+    assert small.execute("SELECT generation FROM archetypes WHERE id = 'troll_m'").fetchone()[0] == 0
 
 
 def test_vo_run_leaves_approval_actions_for_prepare(small):
@@ -716,15 +718,13 @@ def test_approve_adds_a_base_voice_and_unapprove_withdraws_it(small, tmp_path):
     assert lock.from_db(small)["archetypes"] == {}
 
 
-def test_at_most_eight_base_voices(small, tmp_path):
-    from vo import basevoices
-    _prepare(small, tmp_path, FakeEngine(), candidates=basevoices.MAX + 1, samples=0)
-    for i in range(basevoices.MAX + 1):
+def test_more_than_eight_base_voices(small, tmp_path):
+    # More Base Voices is more variety: well past the original 8.
+    _prepare(small, tmp_path, FakeEngine(), candidates=12, samples=0)
+    for i in range(12):
         _act(small, "approve-candidate", f"troll_m/g0s{i}")
-    logged = []
-    prepare.consume_actions(small, logged.append)
-    assert len(prepare.base_voices(small, "troll_m")) == basevoices.MAX
-    assert "at most 8" in logged[-1] and _status(small, "troll_m")["troll_m/g0s8"] == "pending"
+    prepare.consume_actions(small, lambda m: None)
+    assert len(prepare.base_voices(small, "troll_m")) == 12
 
 
 def test_unapprove_after_a_regenerate_supersedes(small, tmp_path):
@@ -798,3 +798,16 @@ def test_single_approval_from_before_several_base_voices_still_works(tmp_path):
                                                     "mode": "cont"}}}
     assert lock.anchors(old["archetypes"]["orc_f"])[0]["candidate"] == "orc_f/g0s1"
     assert lock.find(old, "orc_f", "orc_f/g0s1")["anchor"] == str(wav) and lock.find(old, "orc_f", "x") is None
+
+
+def test_rejected_candidate_is_replaced_by_a_fresh_one(small, tmp_path):
+    eng = FakeEngine()
+    _prepare(small, tmp_path, eng)
+    first = [r[0] for r in small.execute("SELECT id FROM candidates WHERE archetype = 'orc_f' ORDER BY id")]
+    assert len(first) == 2
+    small.execute("INSERT INTO review_actions (action, target) VALUES ('reject-candidate', ?)", (first[0],))
+    small.commit()
+    _prepare(small, tmp_path, eng)
+    live = [r[0] for r in small.execute("SELECT id FROM candidates WHERE archetype = 'orc_f' AND status != 'rejected'")]
+    assert len(live) == 2 and first[0] not in live and first[1] in live
+    assert small.execute("SELECT status FROM candidates WHERE id = ?", (first[0],)).fetchone()[0] == "rejected"

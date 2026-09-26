@@ -55,7 +55,7 @@ describe("approval snapshot", () => {
   test("Archetypes, current Candidates with metrics and samples, the Narrator and progress", () => {
     const fx = approvalFixture();
     const d = approval(fx.db, fx.cands);
-    expect(d.progress).toEqual({ approved: 1, total: 2, base_voices: 1, queued_approvals: 0, max_base_voices: 8 });
+    expect(d.progress).toEqual({ approved: 1, total: 2, base_voices: 1, queued_approvals: 0, max_base_voices: 100 });
     expect(d.complete).toBe(false);
     expect(d.narrator).toMatchObject({ voice_id: "kokoro:bm_lewis", url: "/candidates/narrator/fixed.wav", lines: 721 });
     expect(d.archetypes.map((a: any) => a.id)).toEqual(["troll_m", "orc_f"]); // most lines first
@@ -202,7 +202,7 @@ describe("Base Voices: approve toggles, several per Archetype", () => {
     ]);
   });
 
-  test("progress counts Archetypes with an approval and every Base Voice; at most 8 per Archetype", () => {
+  test("progress counts Archetypes with an approval and every Base Voice; more than 8 allowed", () => {
     for (let i = 2; i <= 8; i++) {
       fx.db.run(
         `INSERT INTO candidates (id, archetype, generation, seed, path, status) VALUES (?, 'orc_f', 0, ?, '', 'approved')`,
@@ -213,9 +213,8 @@ describe("Base Voices: approve toggles, several per Archetype", () => {
     const d = approval(fx.db, fx.cands);
     expect(d.progress).toMatchObject({ approved: 1, total: 2, base_voices: 8 });
     expect(orc().approved).toHaveLength(8);
-    expect(status({ action: "approve-candidate", target: "orc_f/g0s9" })).toBe(409); // the ninth
+    expect(status({ action: "approve-candidate", target: "orc_f/g0s9" })).toBe(201); // the ninth is fine
     expect(status({ action: "unapprove-candidate", target: "orc_f/g0s2" })).toBe(201);
-    expect(status({ action: "approve-candidate", target: "orc_f/g0s9" })).toBe(201); // room again
   });
 });
 
