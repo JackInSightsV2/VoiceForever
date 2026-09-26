@@ -49,15 +49,15 @@ def main(argv: list[str] | None = None) -> None:
                    help="keep running: apply the Approval page's actions as they arrive (approvals, Lexicon"
                         " corrections, regenerations), render what they need, write the locks when complete")
     p.add_argument("--interval", type=float, default=30.0, help="--watch: seconds between checks (default 30)")
-    p = sub.add_parser("voices", help="build every NPC's own voice (anchor) from its approved Archetype, and the"
-                                      " Neighbours table (resumable)")
+    p = sub.add_parser("voices", help="build every NPC's own voice (anchor) from its Base Voice (one of its Archetype's"
+                                      " approved anchors), and the Neighbours table (resumable)")
     p.add_argument("--npc", type=int, action="append", help="only this NPC id (repeatable)")
     p.add_argument("--archetype", action="append", help="only NPCs of this Archetype (repeatable), e.g. orc_f")
     p.add_argument("--limit", type=int, help="build at most N voices this run")
     p.add_argument("--strategy", choices=("dsp", "design"), default="dsp",
-                   help="dsp: shift the Archetype anchor (default); design: VoxCPM2 voice design per NPC")
+                   help="dsp: shift the NPC's Base Voice (default); design: VoxCPM2 voice design per NPC")
     p.add_argument("--candidates", type=int, default=4, help="candidate anchors per NPC and attempt (default 4)")
-    p.add_argument("--ceiling", type=float, help="min similarity to the Archetype anchor")
+    p.add_argument("--ceiling", type=float, help="min similarity to the NPC's Base Voice")
     p.add_argument("--floor", type=float, help="max similarity to any Neighbour")
     p.add_argument("--max-rerolls", type=int, help="re-rolls before an NPC is listed as a leftover")
     p.add_argument("--radius", type=float, default=150.0, help="spawn distance for Neighbours, yards (default 150)")
@@ -225,8 +225,8 @@ def main(argv: list[str] | None = None) -> None:
                     print(f"Lexicon: tts_text updated for {g.respelled} lines")
                 stale = voices.drop_stale(conn, g.approved)
                 if stale:
-                    print(f"{stale} NPC voices were built on a replaced Archetype anchor: they speak with the"
-                          f" Archetype anchor until `vo voices` rebuilds them")
+                    print(f"{stale} NPC voices were built on another Base Voice than now assigned (an approval changed):"
+                          f" they speak with their Base Voice until `vo voices` rebuilds them")
                 voice = args.voice or tts.DEFAULT_VOICE
                 narrator = (args.narrator_voice or g.approved.get("narrator", {}).get("voice_id")
                             or tts.NARRATOR_VOICE_ID)

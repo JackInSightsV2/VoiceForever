@@ -67,8 +67,8 @@ def sync_jobs(conn: sqlite3.Connection, default_voice_id: str,
               narrator_voice_id: str = tts.NARRATOR_VOICE_ID, npc_voices: dict[int, str] | None = None,
               partial: bool = False) -> int:
     """Queue every line for its voice. Lines with no NPC get the Narrator. An NPC line gets, in order: the NPC's own
-    voice (`voices.voice_id`: the per-NPC anchor hook, #13), its Archetype's approved anchor (`npc_voices`, from
-    approved_voices.json), else the default. A changed tts_text or Delivery requeues the job and marks its old audio
+    voice (`voices.voice_id`: the per-NPC anchor hook, #13), its Base Voice (`npc_voices`: one of its Archetype's
+    approved anchors in approved_voices.json, as vo.basevoices assigns it, see lock.npc_voice_ids), else the default. A changed tts_text or Delivery requeues the job and marks its old audio
     stale; jobs for deleted lines or a replaced voice are dropped. Returns how many were (re)queued.
 
     `partial` (incremental approval, vo.gate): an NPC line with neither its own voice nor an approved Archetype anchor

@@ -376,3 +376,107 @@ def test_apply_shift_moves_pitch():
     f0 = voicefeat.measure(up, sr, False)["f0"]
     assert 12 * np.log2(f0 / 150) == pytest.approx(2.0, abs=0.3)
     assert len(up) == pytest.approx(len(a) * 1.1, rel=0.03)
+
+
+# --- Base Voices: several approved anchors per Archetype (ADR-0006) -------------------------------------------------
+
+def test_assign_is_balanced_deterministic_and_prefix_stable():
+    from collections import Counter
+
+    from vo import basevoices
+    npc_arch = {n: "human_m" for n in range(1, 358)} | {1000: "orc_f"}
+    bases = {"human_m": [f"human_m/g0s{i}" for i in range(8)]}
+    got = basevoices.assign(npc_arch, bases, {})
+    assert 1000 not in got  # orc_f has no Base Voice
+    assert sorted(Counter(got.values()).values()) == [44] * 3 + [45] * 5  # 357 over 8
+    assert basevoices.assign(npc_arch, bases, {}) == got
+    # A new NPC (a later id) moves nobody before it.
+    more = basevoices.assign(npc_arch | {358: "human_m"}, bases, {})
+    assert {n: b for n, b in more.items() if n != 358} == got
+
+
+def test_assign_spreads_neighbours_over_different_base_voices():
+    from vo import basevoices
+    bases = {"a": ["a/1", "a/2", "a/3"]}
+    clique = {1, 2, 3}
+    adjacent = {n: clique - {n} for n in clique} | {4: {1}, 1: {2, 3, 4}}
+    got = basevoices.assign({1: "a", 2: "a", 3: "a", 4: "a", 5: "b"}, bases, adjacent)
+    assert len({got[1], got[2], got[3]}) == 3 and got[4] != got[1]
+    # A Neighbour of another Archetype doesn't count; a fixed (sticky) NPC keeps its Base Voice.
+    assert basevoices.assign({1: "a", 2: "a"}, bases, {1: {2}, 2: {1}}, {1: "a/3"})[1] == "a/3"
+    assert basevoices.assign({1: "a", 2: "b"}, {"a": ["a/1", "a/2"], "b": ["b/1"]}, {1: {2}, 2: {1}}) == {
+        1: "a/2", 2: "b/1"}
+
+
+def _bases(tmp_path, *keys):
+    """Lock data (the several-anchor format) with orc_f Base Voices orc_f/g0s<key>, each its own tone."""
+    out = []
+    for k in keys:
+        wav = tmp_path / f"orc_f_{k}.wav"
+        prepare.write_wav(wav, *_tone(140 + 10 * k))
+        out.append({"candidate": f"orc_f/g0s{k}", "anchor": str(wav), "transcript": "You there, go.",
+                    "mode": "ultimate", "description": "An orc woman.", "effect_chain": None})
+    return {"locked": True, "archetypes": {"orc_f": {"label": "Orc female", "mode": "ultimate", "effect_chain": None,
+                                                      "anchors": out}}}
+
+
+def _builds(conn):
+    return {r[0]: (r[1], r[2]) for r in conn.execute("SELECT npc_id, anchor, stale FROM voice_builds")}
+
+
+def test_build_spreads_npcs_over_base_voices_and_neighbours_differ(built, tmp_path):
+    from vo import basevoices
+    conn, _, out = built
+    data = _bases(tmp_path, 1, 2)
+    s, _ = _build(conn, data, out)
+    assert s.built == 6
+    b = _builds(conn)
+    base = {n: a for n, (a, _) in b.items()}
+    assert base[1] != base[2] and len({base[3], base[4], base[5]}) == 2  # (3, 4, 5: three Neighbours, two voices)
+    assert sorted(list(base.values()).count(x) for x in ("orc_f/g0s1", "orc_f/g0s2")) == [3, 3]
+    for n, (vid, _) in _voices(conn).items():  # built on (and scored against) its own Base Voice
+        assert vid.startswith(f"voxcpm:orc_f@{base[n]}#")
+    sig = conn.execute("SELECT DISTINCT base_voices FROM voice_builds").fetchall()
+    assert [r[0] for r in sig] == [basevoices.signature(["orc_f/g0s1", "orc_f/g0s2"])]
+    sp, = s.spread
+    assert sp.counts == {"orc_f/g0s1": 3, "orc_f/g0s2": 3} and (sp.pairs, sp.shared) == (4, 1)
+    assert "2 Base Voices over 6 NPCs (per voice 3-3); 1 of 4" in voices.summary_text(s, voices.Config())
+    # vo run's fallback, before an NPC has its own voice, is the same Base Voice.
+    conn.execute("DELETE FROM voices")
+    conn.commit()
+    assert lock.npc_voice_ids(conn, data) == {n: f"voxcpm:orc_f@{a}" for n, a in base.items()}
+
+
+def test_adding_or_withdrawing_a_base_voice_marks_moved_npcs_stale(built, tmp_path):
+    conn, _, out = built
+    one, two = _bases(tmp_path, 1), _bases(tmp_path, 1, 2)
+    _build(conn, one, out)
+    before = _voices(conn)
+    assert {a for a, _ in _builds(conn).values()} == {"orc_f/g0s1"}
+
+    # A second approval: the NPCs re-assigned to it go stale (voice removed, new Base Voice stored); the rest stay.
+    assert voices.drop_stale(conn, two) == 3
+    b = _builds(conn)
+    moved = {n for n, (a, stale) in b.items() if stale}
+    assert len(moved) == 3 and all(b[n][0] == "orc_f/g0s2" for n in moved)
+    assert set(_voices(conn)) == set(before) - moved
+    assert voices.drop_stale(conn, two) == 0  # nothing more to do
+    s, _ = _build(conn, two, out)
+    assert s.built == 3 and {n: v for n, v in _voices(conn).items() if n not in moved} == {
+        n: v for n, v in before.items() if n not in moved}
+
+    # Sticky: a new NPC (and its Neighbour pairs) moves nobody already built.
+    conn.execute("INSERT INTO npcs (id, name, race, gender, is_named, level_max) VALUES (8, 'New', 'Orc', 'female', 0, 5)")
+    conn.execute("INSERT INTO lines (id, npc_id, type, raw_text, tts_text) VALUES (80, 8, 'gossip', 'Hi.', 'Hi.')")
+    conn.execute("INSERT INTO neighbours (a, b, reason) VALUES (1, 8, 'spawn')")
+    conn.commit()
+    assert voices.drop_stale(conn, two) == 0
+    s, _ = _build(conn, two, out)
+    assert s.built == 1 and _builds(conn)[8][0] != _builds(conn)[1][0]
+
+    # Withdrawing the first: everyone on it moves to the one left.
+    left = _bases(tmp_path, 2)
+    on_first = {n for n, (a, _) in _builds(conn).items() if a == "orc_f/g0s1"}
+    assert voices.drop_stale(conn, left) == len(on_first) == 4
+    s, _ = _build(conn, left, out)
+    assert s.built == 4 and {a for a, _ in _builds(conn).values()} == {"orc_f/g0s2"}
