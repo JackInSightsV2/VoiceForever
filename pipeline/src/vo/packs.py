@@ -208,9 +208,17 @@ def _npcs(conn: sqlite3.Connection, source: Source) -> dict[int, Npc]:
             for r in conn.execute("SELECT id, faction, level_min FROM npcs")}
 
 
+def wowhead_quests(conn: sqlite3.Connection) -> dict[int, Quest]:
+    """Level and zone of the Forever quests known from Wowhead (vo.wowhead); the Source Data's win."""
+    races = {"Alliance": ALLIANCE_RACES, "Horde": HORDE_RACES}
+    return {r[0]: Quest(r[1] or 0, r[2] or 0, races.get(r[4], 0), r[3] or 0) for r in conn.execute(
+        "SELECT id, level, min_level, zone, side FROM wowhead_quests")}
+
+
 def assign(conn: sqlite3.Connection, source: Source | None = None) -> dict[int, str]:
     """line id -> Voice Pack name, for every line in the pipeline DB."""
     source = source or Source()
+    source = Source({**wowhead_quests(conn), **source.quests}, source.teams)
     npcs = _npcs(conn, source)
     unknown = Npc(None, None, ())
     lines = conn.execute("SELECT id, npc_id, quest_id, type FROM lines ORDER BY id").fetchall()

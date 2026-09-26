@@ -229,9 +229,9 @@ def _miss(conn: sqlite3.Connection, r: dict, capture_id: int, counts: Counter) -
     if any(line["text_hash"] == r["hash"] for line in lines):
         counts["known"] += 1  # Core Content not voiced yet, or already captured
         return
-    core = [line for line in lines if line["source"] == "core"]
+    core = [line for line in lines if line["source"] in ("core", "wowhead")]
     if r["type"] in QUEST_TYPES and core:
-        # Quest Text the Source Data has, worded differently: Drift, if we can tell which variant it is.
+        # Quest Text the Source Data (or Wowhead) has, worded differently: Drift, if we can tell which variant it is.
         if len(core) == 1 and core[0]["player_gender"] is None:
             _replace_text(conn, core[0], r, capture_id, "drift (miss)")
             counts["drift_updates"] += 1

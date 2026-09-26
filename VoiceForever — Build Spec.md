@@ -129,6 +129,8 @@ All Source Data is public. The work is joining it, not collecting it.
 | Zone IDs, quest start and end NPCs and objects | QuestieDB `data/Forever` npc/quest/object Lua tables (Forever zone maps) |
 | Race and gender | Forever build `CreatureDisplayInfo` → `CreatureDisplayInfoExtra`, plus `CreatureModelData` file IDs mapped to paths via the community listfile (wago.tools DB2 CSV exports) |
 | Forever Content, Drift | Capture records from the Core Addon's SavedVariables |
+| Forever Content (ahead of Capture) | Wowhead's Forever quest and NPC pages, cached under `data/wowhead/` (`vo wowhead`); in-game text wins |
+| NPC in-game voice set | Forever build `CreatureDisplayInfo.NPCSoundID` → `NPCSounds` → `SoundKitEntry` FileDataIDs → listfile folder (`vo npc-game-voices`) |
 
 **Race and gender resolution**
 
@@ -149,7 +151,7 @@ CREATE TABLE npcs (
   role TEXT,                   -- vendor, trainer, quest, guard, story...
   level_min INTEGER, level_max INTEGER,
   is_named INTEGER DEFAULT 0,
-  source TEXT                  -- core | capture
+  source TEXT                  -- core | capture | wowhead
 );
 CREATE TABLE spawns (npc_id INTEGER, map INTEGER, zone INTEGER, x REAL, y REAL, z REAL);
 CREATE TABLE lines (
@@ -162,7 +164,7 @@ CREATE TABLE lines (
   tts_text TEXT,               -- cleaned, tokens neutralised, lexicon applied
   match_pattern TEXT,          -- gossip only: Lua pattern with tokens as wildcards
   text_hash TEXT,              -- Drift hash of the normalised, token-masked text
-  source TEXT                  -- core | capture
+  source TEXT                  -- core | capture | wowhead
 );
 CREATE TABLE voices (npc_id INTEGER PRIMARY KEY, voice_id TEXT, archetype TEXT, prompt TEXT, ref_clip TEXT, embedding BLOB);
 CREATE TABLE audio (line_id INTEGER, voice_id TEXT, path TEXT, duration_s REAL, status TEXT);

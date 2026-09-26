@@ -71,7 +71,7 @@ _Avoid_: scripted line, emote, bark
 Dialogue that exists in the Source Data, i.e. the original 2004 world as carried into Forever. The v1 target.
 
 **Forever Content**:
-Dialogue added by Forever that the Source Data doesn't know (new quests, zones, the Skyborne race). Voiced incrementally as it is captured in-game.
+Dialogue added by Forever that the Source Data doesn't know (new quests, zones, the Skyborne race). Voiced incrementally as it is captured in-game. Its Quest Text can also be read ahead of Capture from Wowhead's Forever pages; in-game text wins.
 
 **Capture**:
 Dialogue text and NPC details recorded in-game by the Core Addon, fed back into the pipeline as a second source alongside the Source Data. Players contribute Capture by uploading their saved addon data to a public upload page.

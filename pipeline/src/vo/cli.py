@@ -104,6 +104,18 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--interval", type=float, default=60.0, help="--follow: seconds between checks (default 60)")
     p = sub.add_parser("ingest", help="import Capture records from Core Addon SavedVariables files")
     p.add_argument("files", type=Path, nargs="+", metavar="SAVEDVARIABLES")
+    p = sub.add_parser("wowhead", help="Forever Content from Wowhead's Forever database: list the pages to fetch, fetch"
+                                       " them politely (cached under data/wowhead), or ingest the cached pages")
+    p.add_argument("action", choices=("targets", "fetch", "ingest"))
+    p.add_argument("--kind", choices=("quest", "npc"), default="quest",
+                   help="targets/fetch: quest pages (QuestV2 ids the Source Data lacks) or NPC pages (givers and enders"
+                        " of ingested Wowhead quests the pipeline doesn't know)")
+    p.add_argument("--root", type=Path, default=DATA / "wowhead", help="page cache (default data/wowhead)")
+    p.add_argument("--db2", type=Path, default=None, help="Forever DB2 CSV exports (default data/db2/<build>)")
+    p.add_argument("--listfile", type=Path, default=DATA / "community-listfile.csv")
+    p.add_argument("--limit", type=int, help="fetch: at most N pages")
+    p.add_argument("--interval", type=float, default=2.0, help="fetch: seconds between requests (default 2, min 1)")
+    p.add_argument("--out", type=Path, help="targets: write the URLs to this file (default: print them)")
     p = sub.add_parser("npc-game-voices", help="map every NPC to its in-game voice set (display -> NPCSounds -> clips)"
                                                " and the game voice speaker Candidate built from it (npc_game_voice)")
     p.add_argument("--anchors", type=Path, default=DATA / "gamevoice" / "anchors",
@@ -293,6 +305,8 @@ def main(argv: list[str] | None = None) -> None:
             print(ingest.summary_text(path, upload_id, counts))
         if rejected:
             sys.exit(1)
+    elif args.command == "wowhead":
+        _wowhead(args)
     elif args.command == "npc-game-voices":
         from vo import display, npcgamevoice, source
         conn = db.connect(args.db)
@@ -374,6 +388,47 @@ def main(argv: list[str] | None = None) -> None:
             parser.error(f"unknown model(s) {sorted(unknown)}; choose from {list(catalog.MODEL_IDS)}")
         run.bakeoff(args.out or Path("build/bakeoff"), models, limit=args.limit, force=args.force,
                     asr=not args.no_asr, page_only=args.page_only)
+
+
+def _wowhead(args) -> None:
+    from vo import display, npcgamevoice, source, wowhead
+    conn = db.connect(args.db)
+    world = source.open_world(args.world) if args.world.exists() else None
+    db2 = args.db2 or DATA / "db2" / display.BUILD
+    if args.action in ("targets", "fetch"):
+        if args.kind == "quest":
+            if world is None:
+                sys.exit(f"the world DB isn't at {args.world} (vo fetch downloads it)")
+            ids = wowhead.targets(world, db2 / "QuestV2.csv")
+        else:
+            ids = wowhead.needed_npcs(conn, args.root)
+        todo = [i for i in ids if not wowhead.cached(args.root, args.kind, i)]
+        if args.action == "targets":
+            urls = "".join(wowhead.url(args.kind, i) + "\n" for i in todo)
+            if args.out:
+                args.out.write_text(urls)
+            else:
+                sys.stdout.write(urls)
+            print(f"{len(ids)} {args.kind} targets, {len(ids) - len(todo)} cached, {len(todo)} to fetch; save each"
+                  f" page as {args.root / args.kind}/<id>.html", file=sys.stderr)
+            return
+        try:
+            c = wowhead.fetch(args.root, args.kind, ids, interval=max(1.0, args.interval), limit=args.limit)
+        except wowhead.Blocked as e:
+            sys.exit(f"blocked: {e}\nNothing more was requested; pages fetched before it stay cached. Save the pages"
+                     f" from a browser into {args.root / args.kind}/<id>.html instead (vo wowhead targets lists them).")
+        print(f"{args.kind}: {c['fetched']} fetched, {c['cached']} already cached, {c['missing']} missing,"
+              f" {c['failed']} failed")
+        return
+    voices = wowhead.Voices()
+    if world is not None and (db2 / "CreatureDisplayInfo.csv").exists() and args.listfile.exists():
+        server_gender = {r[0]: r[1] for r in world.execute(
+            "SELECT display_id, gender FROM creature_display_info_addon ORDER BY build")}
+        voices.displays = display.Displays.load(db2, args.listfile, server_gender)
+        if (db2 / "NPCSounds.csv").exists():
+            voices.tables = npcgamevoice.load(db2, args.listfile)
+    core = {r[0] for r in world.execute("SELECT DISTINCT entry FROM quest_template")} if world is not None else None
+    print(wowhead.summary_text(wowhead.ingest(conn, args.root, core_quests=core, voices=voices)))
 
 
 def _refresh_coverage(conn, world: Path) -> None:

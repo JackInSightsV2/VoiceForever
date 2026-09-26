@@ -16,7 +16,7 @@ import csv
 import json
 import sqlite3
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
 
@@ -67,13 +67,19 @@ def _rows(db2_dir: Path, table: str) -> Iterable[dict]:
 
 @dataclass
 class Tables:
-    """What the mapping needs from the DB2 tables: display -> NPCSoundID -> Kit."""
+    """What the mapping needs from the DB2 tables: display -> NPCSoundID -> Kit, and each voice clip's Kit."""
     display_sound: dict[int, int]
     kits: dict[int, Kit]
+    fdid_kits: dict[int, Kit] = field(default_factory=dict)
 
     def kit(self, display_id: int) -> tuple[int, Kit] | None:
         sid = self.display_sound.get(display_id, 0)
         return (sid, self.kits[sid]) if sid in self.kits else None
+
+    def sound_kit(self, fdids: Iterable[int]) -> Kit | None:
+        """The Kit most of these clips (FileDataIDs, e.g. from a Wowhead NPC's Sounds tab) are in."""
+        seen = Counter(k for f in fdids if (k := self.fdid_kits.get(f)) is not None)
+        return min(seen, key=lambda k: (-seen[k], k.folder)) if seen else None
 
 
 def load(db2_dir: Path, listfile: Path) -> Tables:
@@ -92,7 +98,8 @@ def load(db2_dir: Path, listfile: Path) -> Tables:
             fdid, _, p = line.strip().partition(";")
             if fdid in fdids:
                 paths[int(fdid)] = p
-    return Tables(display_sound, sound_kits(npc_sounds, entries, paths))
+    fdid_kits = {f: k for f, p in paths.items() if (k := kit_of(p)) is not None}
+    return Tables(display_sound, sound_kits(npc_sounds, entries, paths), fdid_kits)
 
 
 def speakers(anchors_root: Path) -> dict[str, str]:
@@ -150,11 +157,19 @@ def world_slots(world: sqlite3.Connection, npcs: Iterable[int]) -> dict[int, lis
             if t["entry"] in wanted}
 
 
-def wowhead_slots(conn: sqlite3.Connection) -> dict[int, list[tuple[int, int]]]:
-    """Display slots of NPCs known from their Wowhead page (vo.wowhead), for NPCs the Source Data lacks."""
-    if not conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'wowhead_npcs'").fetchone():
-        return {}
-    return {n: [(d, 1)] for n, d in conn.execute("SELECT id, display_id FROM wowhead_npcs WHERE display_id > 0")}
+def wowhead_voices(conn: sqlite3.Connection, tables: Tables, speaker_of: dict[str, str]) -> list[NpcVoice]:
+    """In-game voice sets of NPCs known from their Wowhead page (vo.wowhead): its display's, else the kit of the clips
+    on its Sounds tab."""
+    out = []
+    for n, d, sounds in conn.execute("SELECT id, display_id, sounds FROM wowhead_npcs ORDER BY id"):
+        got = tables.kit(d) if d else None
+        if got is None:
+            kit = tables.sound_kit(f for s in json.loads(sounds or "[]") for f in s.get("files", []))
+            got = (0, kit) if kit is not None else None
+        if got is not None:
+            out.append(NpcVoice(n, d or 0, got[0], got[1].archetype, got[1].folder, speaker_of.get(got[1].folder),
+                                "wowhead"))
+    return out
 
 
 def refresh(conn: sqlite3.Connection, world: sqlite3.Connection | None, tables: Tables, speaker_of: dict[str, str]
@@ -163,9 +178,8 @@ def refresh(conn: sqlite3.Connection, world: sqlite3.Connection | None, tables: 
     npcs = [r[0] for r in conn.execute("SELECT id FROM npcs")]
     slots = world_slots(world, npcs) if world is not None else {}
     rows = map_npcs(slots, tables, speaker_of)
-    have = {r.npc_id for r in rows}
-    rows += map_npcs({n: s for n, s in wowhead_slots(conn).items() if n not in have and n in set(npcs)},
-                     tables, speaker_of, "wowhead")
+    have, known = {r.npc_id for r in rows}, set(npcs)
+    rows += [r for r in wowhead_voices(conn, tables, speaker_of) if r.npc_id not in have and r.npc_id in known]
     with conn:
         conn.execute("DELETE FROM npc_game_voice")
         conn.executemany("INSERT INTO npc_game_voice VALUES (?, ?, ?, ?, ?, ?, ?)",
