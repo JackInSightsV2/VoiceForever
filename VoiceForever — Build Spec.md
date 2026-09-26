@@ -66,6 +66,12 @@ flowchart LR
 
 **2. Approval page.** Per Candidate you can **Approve** (it becomes the Archetype's anchor) or **Reject**; per Archetype you can **Regenerate with a note** (e.g. "deeper, less theatrical"). The note is appended to the Archetype's description, and a new batch of Candidates is rendered. The actions are queued, and the next `vo prepare` applies them. You need an approved anchor for every Archetype. Per Lexicon entry you can accept or correct the spelling. Approval writes a locked `approved_voices.json` and `lexicon.json`, and `vo run` refuses to start without them. Names outside the top 300 are drafted automatically and checked by ASR.
 
+**Incremental approval.** Approving 32 Archetypes and 300 names takes hours, so generation need not wait for all of it:
+
+- `vo prepare --watch [--interval 30]` stays running: it applies the Approval page's actions as they arrive, renders what they need (samples of corrected names, a regenerated Archetype's Candidates) and writes the locks once everything is approved. A sample that comes back silent on every seed is recorded (`sample_skips`) and not retried until its Archetype is regenerated.
+- `vo run --partial` voices only the lines it can: those of NPCs whose Archetype has an approved anchor (read from the DB) and all Narrator lines, with the Lexicon's spellings as they stand (reviewed where reviewed, drafts otherwise). Other lines wait, neither failed nor quarantined. The next `vo run --partial` queues the lines of newly approved Archetypes and requeues lines whose spoken text a corrected spelling changed. `--follow` keeps it running: once the queue is empty it checks every `--interval` seconds (default 60) for newly approved work. `vo voices --partial` builds NPC Voices for the approved Archetypes the same way.
+- Without `--partial`, `vo run` still needs both locks.
+
 **3. `vo run`** is fully unattended:
 
 - It is a job queue in SQLite, checkpointed per line, so a crash or reboot resumes where it stopped.

@@ -18,7 +18,7 @@ A human-approved template voice for one race and gender, or one Creature Family,
 _Avoid_: base voice, base archetype
 
 **Approval Gate**:
-The only human step before an unattended run: approving Archetypes and the Lexicon's top names.
+The only human step before an unattended run: approving Archetypes and the Lexicon's top names. Approval can be incremental: a partial run voices the lines of Archetypes approved so far, and the rest wait.
 
 **Lexicon**:
 Phonetic spellings for lore names (e.g. Kel'Thuzad), used in spoken audio. The most frequent names are human-approved; the rest are drafted and ASR-checked automatically.
