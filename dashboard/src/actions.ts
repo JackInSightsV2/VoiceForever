@@ -26,6 +26,14 @@ export interface ActionRequest {
   payload?: Record<string, unknown>;
 }
 
+/** An optional review note (regenerate, make variations): trimmed text up to MAX_NOTE, else null. */
+function noteOf(payload: Record<string, unknown>): string | null {
+  const note = payload.note ?? "";
+  if (typeof note !== "string") throw new ActionError("note must be text");
+  if (note.trim().length > MAX_NOTE) throw new ActionError(`note is over ${MAX_NOTE} characters`);
+  return note.trim() || null;
+}
+
 /** Validate a request against the current state and return the row to insert. */
 export function validate(read: Database, req: ActionRequest, now: Date = new Date()) {
   const { action } = req;
@@ -98,10 +106,18 @@ export function validate(read: Database, req: ActionRequest, now: Date = new Dat
     const a = read.query("SELECT kind FROM archetypes WHERE id = ?").get(id) as Record<string, any> | null;
     if (!a) throw new ActionError(`no archetype ${JSON.stringify(req.target)}`, 404);
     if (a.kind === "narrator") throw new ActionError("the Narrator is fixed", 409);
-    const note = payload.note ?? "";
-    if (typeof note !== "string") throw new ActionError("note must be text");
-    if (note.trim().length > MAX_NOTE) throw new ActionError(`note is over ${MAX_NOTE} characters`);
-    return { action, target: id, payload: note.trim() ? JSON.stringify({ note: note.trim() }) : null };
+    const note = noteOf(payload);
+    return { action, target: id, payload: note ? JSON.stringify({ note }) : null };
+  }
+  // Make variations of a Candidate (vo.variations): `vo prepare` renders 4 more "<id>~v<k>", the note steering the
+  // style ones. Repeatable: each request adds 4.
+  if (action === "vary-candidate") {
+    const id = typeof req.target === "string" ? req.target : "";
+    const c = read.query("SELECT archetype, status FROM candidates WHERE id = ?").get(id) as Record<string, any> | null;
+    if (!c || c.archetype === "narrator") throw new ActionError(`no candidate ${JSON.stringify(req.target)}`, 404);
+    if (c.status === "superseded") throw new ActionError(`candidate ${id} was superseded by a regenerate`, 409);
+    const note = noteOf(payload);
+    return { action, target: id, payload: note ? JSON.stringify({ note }) : null };
   }
 
   // Lexicon: accept or correct a top name's spelling, consumed by `vo prepare`.

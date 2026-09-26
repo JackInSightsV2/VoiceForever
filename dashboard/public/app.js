@@ -331,6 +331,7 @@ function wireLine(el) {
 // --- Approval ---------------------------------------------------------------------------------------------------
 
 const openArch = new Set(); // expanded Archetype cards survive live re-renders
+const showRetired = new Set(); // Archetypes whose retired Candidates are shown
 let archFilter = "all";
 let maxBase = 100; // Base Voices per Archetype (the snapshot's progress.max_base_voices)
 const pct = (n) => (n == null ? "–" : `${Math.round(n * 100)}%`);
@@ -397,16 +398,34 @@ function renderApproval(d) {
         if (!note && !confirm(`Regenerate ${target} without a note?`)) return;
         act("regenerate-archetype", target, { note });
       }
+      if (a === "vary") {
+        const input = main.querySelector(`textarea[data-vnote="${CSS.escape(target)}"]`);
+        const note = input ? input.value.trim() : "";
+        act("vary-candidate", target, note ? { note } : undefined).then((ok) => ok && input && (input.value = ""));
+      }
+      if (a === "retired") {
+        showRetired.has(target) ? showRetired.delete(target) : showRetired.add(target);
+        renderApproval(d);
+      }
     }),
   );
 }
 
+// "queued: …" wording for an Approval action.
+const QUEUED_AS = {
+  "approve-candidate": "approve", "unapprove-candidate": "unapprove", "reject-candidate": "reject",
+  "regenerate-archetype": "regenerate", "vary-candidate": "variations",
+};
+
 function archCard(a) {
   const races = Object.entries(a.races).map(([r, k]) => `${esc(r)} (${k})`).join(", ");
-  const queued = a.queued.map((q) => `<span class="queued">queued: ${esc(q.action.replace("-candidate", "").replace("-archetype", ""))} ${esc(q.action === "regenerate-archetype" ? q.note || "" : q.target.split("/")[1])}</span>`).join("");
+  const queued = a.queued.map((q) => `<span class="queued">queued: ${esc(QUEUED_AS[q.action] || q.action)} ${esc(q.action === "regenerate-archetype" ? q.note || "" : q.target.split("/")[1])}</span>`).join("");
   const after = a.approved_after_queue !== a.approved_count ? ` <span class="queued">→ ${a.approved_after_queue} after vo prepare</span>` : "";
   const status = `<span class="tag ${a.approved_count ? "ok" : ""}">${a.approved_count} approved</span>${after}
-    <span class="tag">${a.candidates.filter((c) => c.status !== "rejected").length} candidates</span>`;
+    <span class="tag">${a.candidates.filter((c) => c.status !== "rejected" && c.status !== "retired").length} candidates</span>`;
+  const retiredOn = showRetired.has(a.id);
+  const cands = a.candidates.filter((c) => c.status !== "retired" || retiredOn);
+  const gv = a.game_voice_baseline;
   const notes = a.notes.length ? ` <span class="note">${a.notes.map(esc).join(". ")}.</span>` : "";
   return `<details class="card arch" data-id="${esc(a.id)}" ${openArch.has(a.id) ? "open" : ""}>
     <summary class="ahead"><b>${esc(a.label)}</b><span class="mono muted">${esc(a.id)}</span>${status}
@@ -417,10 +436,11 @@ function archCard(a) {
     <div class="muted small">Anchor line: <i>${esc(a.anchor_text)}</i> · continuation <span class=mono>${esc(a.mode)}</span>
       · generation ${a.generation}${a.superseded ? ` (${a.superseded} superseded)` : ""}${a.anchor_chain ? ` · anchor effect chain <span class=mono>${esc(a.anchor_chain)}</span> (applied once to each anchor; lines continue from the processed clip)` : ""}${a.effect_chain ? ` · per-line effect chain <span class=mono>${esc(a.effect_chain)}</span>` : ""}</div>
     ${a.approved_count ? `<div class="muted small">Base Voices: ${a.approved.map((id) => `<span class=mono>${esc(id.split("/")[1])}</span>`).join(", ")} · last approved ${when(a.approved_at)}.</div>` : ""}
-    ${a.candidates.length ? `<div class="cands">${a.candidates.map((c) => candCard(a, c)).join("")}</div>` : `<div class="empty">No Candidates yet: run <span class=mono>vo prepare --archetype ${esc(a.id)}</span>.</div>`}
+    ${a.retired ? `<div class="muted small">${a.retired} retired Candidate${a.retired === 1 ? "" : "s"} ${retiredOn ? "shown" : "hidden"} <button data-a="retired" data-target="${esc(a.id)}">${retiredOn ? "Hide" : "Show"} retired</button></div>` : ""}
+    ${cands.length ? `<div class="cands">${cands.map((c) => candCard(a, c)).join("")}</div>` : `<div class="empty">No Candidates yet: run <span class=mono>vo prepare --archetype ${esc(a.id)}</span>.</div>`}
     <div class="regen">
-      <textarea data-note="${esc(a.id)}" rows="2" placeholder="Note for a regenerate, e.g. deeper, less theatrical (appended to the description)"></textarea>
-      <button data-a="regen" data-target="${esc(a.id)}">Regenerate with note</button>
+      <textarea data-note="${esc(a.id)}" rows="2" placeholder="${gv ? "Style for new variations of the game voices, e.g. older and gravelly (nothing is designed for a game voice Archetype)" : "Note for a regenerate, e.g. deeper, less theatrical (appended to the description)"}"></textarea>
+      <button data-a="regen" data-target="${esc(a.id)}">${gv ? "Vary game voices with note" : "Regenerate with note"}</button>
     </div>
   </details>`;
 }
@@ -430,12 +450,17 @@ function candCard(a, c) {
   const full = !on && a.approved_after_queue >= maxBase;
   const qd = a.queued.filter((q) => q.target === c.id).map((q) => q.action);
   const metric = (label, v, unit = "") => `<span title="${label}"><span class="muted">${label}</span> ${v == null ? "–" : esc(v) + unit}</span>`;
-  return `<div class="cand ${c.status}${on ? " picked" : ""}">
+  const v = c.variation;
+  const src = c.variation_of;
+  const srcShown = src && a.candidates.some((x) => x.id === src && (x.status !== "retired" || showRetired.has(a.id)));
+  return `<div class="cand ${c.status}${on ? " picked" : ""}" id="cand-${esc(c.id)}">
     <div class="chead"><b class="mono">${esc(c.id.split("/")[1])}</b><span class="muted">seed ${c.seed}</span>
-      ${c.label ? `<span class="tag">${esc(c.label)}</span>` : ""}
+      ${src ? `<span class="tag">variation</span>` : c.label ? `<span class="tag">${esc(c.label)}</span>` : ""}
       ${c.status !== "pending" ? `<span class="tag ${c.status === "approved" ? "ok" : ""}">${esc(c.status)}</span>` : ""}
-      ${qd.map((q) => `<span class="queued">queued: ${esc(q.replace("-candidate", ""))}</span>`).join("")}</div>
+      ${qd.map((q) => `<span class="queued">queued: ${esc(QUEUED_AS[q] || q)}</span>`).join("")}
+      ${c.rendering_variations ? `<span class="queued">rendering ${c.rendering_variations} variations</span>` : ""}</div>
     ${c.url ? `<audio controls preload="none" src="${esc(c.url)}"></audio>` : `<span class="muted">audio missing</span>`}
+    ${src ? `<div class="muted small">Variation of ${srcShown ? `<a href="#cand-${esc(src)}" class="mono">${esc(src.split("/")[1])}</a>` : `<span class=mono>${esc(src.split("/")[1])}</span>`}: ${esc((c.label || "").replace(/^variation of .*?: (?=style |DSP )/, ""))}${v && v.sim != null ? ` · similarity to it ${Number(v.sim).toFixed(3)}` : ""}${c.mode ? ` · continuation <span class=mono>${esc(c.mode)}</span>` : ""}</div>` : ""}
     ${c.game_voice ? `<div class="muted small">WoW's own NPC voice clips, joined (ADR-0007): <i>${esc(c.anchor_text || "")}</i>${c.mode ? ` · continuation <span class=mono>${esc(c.mode)}</span>` : ""}</div>` : ""}
     ${c.anchor_chain ? `<details class="small"><summary class="muted">anchor through the <span class=mono>${esc(c.anchor_chain)}</span> chain; before it</summary>${c.raw_url ? `<audio controls preload="none" src="${esc(c.raw_url)}"></audio>` : ""}</details>` : ""}
     <div class="metrics">${metric("f0", c.f0, " Hz")}${metric("HNR", c.hnr, " dB")}${metric("centroid", c.centroid, " Hz")}
@@ -452,6 +477,10 @@ function candCard(a, c) {
         ? `<button class="on" data-a="unapprove" data-target="${esc(c.id)}" title="Approved: click to withdraw">Unapprove</button>`
         : `<button class="primary" data-a="approve" data-target="${esc(c.id)}" ${full ? `disabled title="${maxBase} Base Voices already: unapprove one first"` : ""}>Approve</button>`}
       <button class="danger" data-a="reject" data-target="${esc(c.id)}" ${c.status === "rejected" ? "disabled" : ""}>Reject</button>
+    </div>
+    <div class="regen vary">
+      <textarea data-vnote="${esc(c.id)}" rows="1" placeholder="Variation note (optional), e.g. older, more gravelly"></textarea>
+      <button data-a="vary" data-target="${esc(c.id)}" title="vo prepare renders 4 new Candidates from this one: 2 steered by a style (and your note), 2 pitch/formant/pace shifts">Make variations</button>
     </div>
   </div>`;
 }

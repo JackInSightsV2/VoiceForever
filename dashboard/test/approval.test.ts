@@ -120,6 +120,41 @@ describe("approval snapshot", () => {
     expect(troll.candidates.find((c: any) => c.id === "troll_m/g1s0")).toMatchObject({ game_voice: false, mode: null });
   });
 
+  test("variations show their source and method; retired ones are listed for the page to hide", () => {
+    const fx = approvalFixture();
+    const wav = (rel: string) => {
+      const p = join(fx.cands, rel);
+      mkdirSync(join(p, ".."), { recursive: true });
+      writeFileSync(p, "RIFF");
+      return p;
+    };
+    const ins = (id: string, gen: number, status: string, label: string | null, variation: string | null, mode: string | null) =>
+      fx.db.run(
+        `INSERT INTO candidates (id, archetype, generation, seed, path, anchor_text, label, mode, status, variation)
+         VALUES (?, 'troll_m', ?, 0, ?, 'Anchor line.', ?, ?, ?, ?)`,
+        [id, gen, wav(`troll_m/${id.split("/")[1]}.wav`), label, mode, status, variation],
+      );
+    ins("troll_m/gv-standard", 1, "pending", "game voice: standard", null, "ultimate");
+    ins("troll_m/gv-standard~v1", 1, "pending", "variation of game voice: standard: style 'older'",
+      JSON.stringify({ source: "troll_m/gv-standard", method: "style", style: "older", sim: 0.91 }), "ultimate");
+    ins("troll_m/g0s5", 0, "retired", null, null, null);
+    fx.db.run("INSERT INTO variation_requests (source, archetype, k0, n) VALUES ('troll_m/gv-standard', 'troll_m', 2, 4)");
+    const ro = new Database(fx.path, { readonly: true });
+    insertAction(ro, fx.db, { action: "vary-candidate", target: "troll_m/gv-standard~v1", payload: { note: "rougher" } });
+    const troll = approval(fx.db, fx.cands).archetypes[0];
+    const byId = (id: string) => troll.candidates.find((c: any) => c.id === id);
+    expect(byId("troll_m/gv-standard")).toMatchObject({ game_voice: true, variation_of: null, rendering_variations: 4 });
+    expect(byId("troll_m/gv-standard~v1")).toMatchObject({
+      game_voice: false, variation_of: "troll_m/gv-standard", mode: "ultimate",
+      variation: { method: "style", style: "older", sim: 0.91 }, label: "variation of game voice: standard: style 'older'",
+    });
+    expect(byId("troll_m/g0s5")).toMatchObject({ status: "retired" }); // an older generation, still listed
+    expect(troll.retired).toBe(1);
+    expect(troll.game_voice_baseline).toBe(true);
+    expect(approval(fx.db, fx.cands).archetypes[1].game_voice_baseline).toBe(false);
+    expect(troll.queued).toMatchObject([{ action: "vary-candidate", target: "troll_m/gv-standard~v1", note: "rougher" }]);
+  });
+
   test("queued actions show on their Archetype until vo prepare consumes them", () => {
     const fx = approvalFixture();
     const ro = new Database(fx.path, { readonly: true });
@@ -162,6 +197,31 @@ describe("approval actions", () => {
       { action: "regenerate-archetype", target: "troll_m", payload: JSON.stringify({ note: "less theatrical" }) },
       { action: "regenerate-archetype", target: "orc_f", payload: null },
     ]);
+  });
+
+  test("make variations: queued with an optional note, repeatable", () => {
+    insertAction(ro, fx.db, { action: "vary-candidate", target: "troll_m/g1s0" });
+    insertAction(ro, fx.db, { action: "vary-candidate", target: "troll_m/g1s0", payload: { note: "  older, gravelly " } });
+    insertAction(ro, fx.db, { action: "vary-candidate", target: "orc_f/g0s1", payload: { note: "" } }); // approved: fine
+    insertAction(ro, fx.db, { action: "vary-candidate", target: "troll_m/g1s1" }); // rejected: still a voice to vary
+    expect(rows()).toEqual([
+      { action: "vary-candidate", target: "troll_m/g1s0", payload: null },
+      { action: "vary-candidate", target: "troll_m/g1s0", payload: JSON.stringify({ note: "older, gravelly" }) },
+      { action: "vary-candidate", target: "orc_f/g0s1", payload: null },
+      { action: "vary-candidate", target: "troll_m/g1s1", payload: null },
+    ]);
+  });
+
+  test("make variations: bad targets and notes are refused", () => {
+    expect(err({ action: "vary-candidate", target: "troll_m/g9s9" }).status).toBe(404);
+    expect(err({ action: "vary-candidate" }).status).toBe(404);
+    expect(err({ action: "vary-candidate", target: 7 }).status).toBe(404);
+    expect(err({ action: "vary-candidate", target: "narrator/fixed" }).status).toBe(404);
+    expect(err({ action: "vary-candidate", target: "troll_m/g0s0" }).status).toBe(409); // superseded
+    expect(err({ action: "vary-candidate", target: "troll_m/g1s0", payload: { note: 5 } }).status).toBe(400);
+    expect(err({ action: "vary-candidate", target: "troll_m/g1s0", payload: { note: "x".repeat(501) } }).status).toBe(400);
+    expect(err({ action: "vary-candidate", target: "troll_m/g1s0", payload: [] as any }).status).toBe(400);
+    expect(rows()).toEqual([]);
   });
 
   test("bad targets and notes are refused", () => {

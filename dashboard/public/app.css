@@ -131,6 +131,8 @@ details summary { cursor: pointer; color: var(--muted); font-size: 12.5px; }
 .cand .qactions { margin-top: 2px; }
 .regen { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; margin-top: 12px; align-items: start; }
 .regen textarea { min-height: 38px; font-family: inherit; font-size: 13px; }
+.regen.vary { margin-top: 4px; }
+.regen.vary textarea { min-height: 30px; }
 @media (max-width: 560px) { .regen { grid-template-columns: 1fr; } }
 
 /* Approval: Lexicon */

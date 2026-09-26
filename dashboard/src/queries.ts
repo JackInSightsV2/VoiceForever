@@ -208,7 +208,7 @@ export function quarantine(db: Database, audioRoot: string) {
 
 // --- Approval ------------------------------------------------------------------------------------------------------
 
-export const APPROVAL_ACTIONS = ["approve-candidate", "unapprove-candidate", "reject-candidate", "regenerate-archetype"] as const;
+export const APPROVAL_ACTIONS = ["approve-candidate", "unapprove-candidate", "reject-candidate", "regenerate-archetype", "vary-candidate"] as const;
 /** Approved Candidates (Base Voices) an Archetype may have (vo.basevoices.MAX, ADR-0006). */
 export const MAX_BASE_VOICES = 100; // effectively uncapped: more Base Voices, more variety
 
@@ -231,6 +231,15 @@ export function approvedAfterQueue(db: Database, archetype: string): Set<string>
   }
   return ids;
 }
+
+/** A variation Candidate's source: "<source>~v<k>" -> "<source>"; null for any other Candidate. */
+export function variationSource(id: string): string | null {
+  const m = /^(.+)~v\d+$/.exec(String(id));
+  return m ? m[1] : null;
+}
+
+/** A game voice Candidate itself ("<archetype>/gv-<key>"), not a variation of one. */
+export const isGameVoice = (id: string) => String(id).includes("/gv-") && !String(id).includes("~v");
 
 const parseJson = (s: string | null, fallback: any) => {
   try {
@@ -264,6 +273,15 @@ export function approval(db: Database, candidatesRoot: string) {
     list.push({ idx: s.idx, line_id: s.line_id, text: s.text, url: url(s.path), duration_s: s.duration_s, asr: s.asr, wer: s.wer });
     samplesBy.set(s.candidate, list);
   }
+  // Variation slots `vo prepare` has taken up but not rendered yet, per source (the table is newer than some DBs).
+  const rendering = new Map<string, number>();
+  try {
+    for (const r of db.query("SELECT source, SUM(n) AS n FROM variation_requests WHERE done_at IS NULL GROUP BY source").all() as Row[]) {
+      rendering.set(r.source, r.n);
+    }
+  } catch {
+    // no variation_requests yet
+  }
   const archOf = new Map(candidates.map((c) => [c.id, c.archetype]));
   const queuedFor = (aid: string) =>
     queued
@@ -282,7 +300,10 @@ export function approval(db: Database, candidatesRoot: string) {
       };
       continue;
     }
-    const current = mine.filter((c) => c.status !== "superseded" && (c.generation === a.generation || c.status === "approved"));
+    // Retired Candidates (vo prepare --retire-unapproved) are listed too; the page hides them unless asked.
+    const current = mine.filter(
+      (c) => c.status !== "superseded" && (c.generation === a.generation || c.status === "approved" || c.status === "retired"),
+    );
     const approved = mine.filter((c) => c.status === "approved").map((c) => c.id).sort();
     const willBe = approvedAfterQueue(db, a.id);
     out.push({
@@ -293,12 +314,18 @@ export function approval(db: Database, candidatesRoot: string) {
       // Base Voices: the approved Candidates (several per Archetype), and how many there will be after the queue.
       approved, approved_count: approved.length, approved_after_queue: willBe.size, approved_at: a.approved_at,
       superseded: mine.length - current.length,
+      retired: current.filter((c) => c.status === "retired").length,
+      // Game voice baseline: an Archetype with game voice Candidates designs nothing; a regenerate varies them.
+      game_voice_baseline: mine.some((c) => isGameVoice(c.id)),
       candidates: current.map((c) => ({
         id: c.id, seed: c.seed, generation: c.generation, status: c.status, url: url(c.path), duration_s: c.duration_s,
         approved: c.status === "approved", will_be_approved: willBe.has(c.id),
         label: c.label ?? null, anchor_chain: c.anchor_chain ?? null, raw_url: url(c.raw_path ?? null),
         // A game voice (ADR-0007) reads its own clips, not the Archetype's anchor line, and may continue in its own mode.
-        game_voice: String(c.id).includes("/gv-"), anchor_text: c.anchor_text ?? null, mode: c.mode ?? null,
+        game_voice: isGameVoice(c.id), anchor_text: c.anchor_text ?? null, mode: c.mode ?? null,
+        // A variation (vo.variations) of another Candidate: its source and how it was made.
+        variation_of: variationSource(c.id), variation: parseJson(c.variation ?? null, null),
+        rendering_variations: rendering.get(c.id) ?? 0,
         f0: c.f0, hnr: c.hnr, centroid: c.centroid, asr: c.asr, wer: c.wer, samples: samplesBy.get(c.id) ?? [],
       })),
       queued: queuedFor(a.id),
