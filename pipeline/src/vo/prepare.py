@@ -378,7 +378,11 @@ def seed_from_bakeoff(conn, a: sqlite3.Row, out: Path, check: _Check, root: Path
     return done
 
 
-GAMEVOICE_MODE = "ultimate"  # game voice anchors: see ADR-0007
+# Game voice anchors continue in "ultimate" (the anchor also as reference). Measured on orc_m and troll_m's 5 game
+# voice anchors x 3 sample lines: cont vs ultimate WER 3.7% vs 5.2% and WavLM similarity to the anchor 0.961 vs
+# 0.959 (both within noise: one troll line decides the WER), but ultimate held the anchor's pitch closer (mean
+# |f0 difference| 2.55 vs 3.42 semitones), which is the character a human picks the anchor for (ADR-0005).
+GAMEVOICE_MODE = "ultimate"
 
 
 def seed_from_gamevoice(conn, a: sqlite3.Row, out: Path, check: _Check, library: gamevoice.Library,
