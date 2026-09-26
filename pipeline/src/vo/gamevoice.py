@@ -3,7 +3,7 @@
 Forever ships the original NPC voice sets: per race and gender, a few "kits" (standard, guard, official, ...), each
 one voice actor saying greetings, farewells, vendor lines and "pissed" lines when clicked, as short Ogg clips under
 `sound/creature/<race><gender><kit>npc/`. A few creature folders (bosses, ogres, dragons) hold speech too, mixed with
-grunts. `vo prepare --import-gamevoice` turns each distinct speaker into a Candidate next to the VoxCPM2-designed ones:
+grunts: their clips pass a stricter transcript check (creature_spoken). `vo prepare --import-gamevoice` turns each distinct speaker into a Candidate next to the VoxCPM2-designed ones:
 
 1. Kits: the community listfile's paths matching an NPC voice set (NPC_KIT) or a listed creature folder
    (CREATURE_KITS), grouped by folder, for the Archetypes vo.archetypes knows.
@@ -27,6 +27,7 @@ import re
 import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass, field
+from functools import cache
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -50,6 +51,9 @@ GAP_S = 0.3
 CLIP_RMS_DB = -20.0
 PEAK = 0.95
 MAX_WORDS_PER_S = 5.0  # Whisper hallucinating on a grunt writes more words than fit
+MIN_KNOWN = 0.6        # creature clips: this share of the words must be English (creature_spoken) ...
+MIN_WORDS_PER_S = 0.8  # ... and they must fill the clip (two words in an 8 s roar are a guess)
+MIN_CLIPS = 2          # a speaker needs at least this many clean clips
 SAMPLE_TRIES = 3
 
 # NPC voice sets. Their clip kinds, in the order they're picked for an anchor (greetings are the calmest).
@@ -74,6 +78,8 @@ CREATURE_KITS: dict[str, str] = {
     "satyr": "wild_folk_m", "centaurfemale": "wild_folk_f", "dryad": "fey_f", "nagafemale": "naga_f",
     "naga_female": "naga_f",
 }
+# Creature clips that are never speech, by file name: combat grunts and roars.
+CREATURE_SKIP = re.compile(r"attack|wound|death|roar|footstep|breath|spellcast|emote|swing|clickable|stand|run|walk")
 
 # Transcripts that aren't speech: interjections a grunt is written as, and Whisper's stock hallucinations.
 INTERJECTIONS = {"ah", "aah", "ahh", "argh", "arg", "ugh", "uh", "uhh", "um", "hmm", "hm", "hmph", "huh", "oh", "ooh",
@@ -174,7 +180,7 @@ def find_kits(rows: Iterable[tuple[int, str]], creature: dict[str, str] | None =
             kit = kits.setdefault((aid, folder), Kit(aid, folder, key, "npc"))
         else:
             parts = p.split("/")
-            if len(parts) != 4 or parts[2] not in creature:
+            if len(parts) != 4 or parts[2] not in creature or CREATURE_SKIP.search(parts[3]):
                 continue
             aid, folder, k = creature[parts[2]], parts[2], kind(p)
             kit = kits.setdefault((aid, folder), Kit(aid, folder, folder, "creature"))
@@ -241,6 +247,36 @@ def spoken(text: str, duration_s: float) -> bool:
     if all(w.strip("'") in INTERJECTIONS or len(w.strip("'")) < 2 for w in words):
         return False
     return len(words) <= MAX_WORDS_PER_S * duration_s + 2
+
+
+@cache
+def lexicon_words() -> frozenset[str]:
+    """English words (lower case) from misaki's pronunciation dictionaries (a pipeline dependency already)."""
+    import importlib.resources
+
+    words: set[str] = set()
+    for name in ("us_gold.json", "us_silver.json"):
+        words |= {w.lower() for w in json.loads(importlib.resources.files("misaki.data").joinpath(name).read_text())}
+    return frozenset(words)
+
+
+def _known(word: str, lexicon: frozenset[str]) -> bool:
+    return any(w in lexicon for w in (word, word.rstrip("s"), word[:-2] if word.endswith(("es", "ed")) else word,
+                                      word[:-3] if word.endswith("ing") else word))
+
+
+def creature_spoken(text: str, duration_s: float, lexicon: frozenset[str] | None = None) -> bool:
+    """`spoken`, held stricter for creature clips, which are mostly grunts that Whisper writes up as words: plain
+    ASCII, no letter held three times ("Grrrr"), at least two real words and MIN_WORDS_PER_S, most (MIN_KNOWN) of them
+    English (a lore name may be among them)."""
+    if not spoken(text, duration_s) or not text.isascii() or "<|" in text or re.search(r"([a-z])\1\1", text.lower()):
+        return False
+    words = [w.strip("'") for w in re.findall(r"[a-z][a-z']*", text.lower())]
+    words = [w for w in words if w not in INTERJECTIONS]
+    if len(words) < max(2, MIN_WORDS_PER_S * duration_s):
+        return False
+    lexicon = lexicon_words() if lexicon is None else lexicon
+    return sum(_known(w, lexicon) for w in words) >= MIN_KNOWN * len(words)
 
 
 def clean_text(text: str) -> str:
@@ -394,9 +430,9 @@ class Library:
         tmp.write_text(json.dumps(self._clip_db(), indent=1, sort_keys=True))
         tmp.replace(self._clips_path)
 
-    def part(self, clip: Clip) -> Part | None:
+    def part(self, clip: Clip, strict: bool = False) -> Part | None:
         """A clip downloaded, decoded, trimmed and transcribed (cached), or None if the build lacks it, it's too short,
-        or its transcript isn't speech."""
+        or its transcript isn't speech (`strict`: by creature_spoken)."""
         from vo import audio
         from vo.prepare import read_wav, write_wav
 
@@ -428,7 +464,7 @@ class Library:
             return None
         if "text" not in info:
             info["text"] = self._heard(wav).strip()
-        info["spoken"] = spoken(info["text"], len(x) / RATE)
+        info["spoken"] = (creature_spoken if strict else spoken)(info["text"], len(x) / RATE)
         return Part(clip.fdid, clip.kind, x, info["text"]) if info["spoken"] else None
 
     def plan_path(self, aid: str) -> Path:
@@ -451,7 +487,7 @@ class Library:
         parts: dict[str, list[Part]] = {}
         failed = self.failed
         for kit in kits:
-            got = [x for c in kit.clips if (x := self.part(c)) is not None]
+            got = [x for c in kit.clips if (x := self.part(c, kit.source == "creature")) is not None]
             self._save_clips()
             if got:
                 parts[kit.folder] = got
@@ -486,8 +522,8 @@ class Library:
             chosen = pick([x for f in g for x in parts[f]])
             samples, transcript = assemble(chosen)
             dur = len(samples) / RATE
-            if dur < MIN_ANCHOR_S:
-                self.log(f"  {'_'.join(g)}: only {dur:.1f}s of clean speech, no Candidate")
+            if dur < MIN_ANCHOR_S or len(chosen) < MIN_CLIPS:
+                self.log(f"  {'_'.join(g)}: only {dur:.1f}s of clean speech in {len(chosen)} clip(s), no Candidate")
                 continue
             key = "_".join(k.key for k in gk)
             wav = self.root / "anchors" / aid / f"{key}.wav"

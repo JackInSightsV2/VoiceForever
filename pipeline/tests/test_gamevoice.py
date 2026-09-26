@@ -26,6 +26,8 @@ LISTFILE = """\
 4;sound/creature/goblinmaleguardnpc/goblinmaleguardnpcgreeting01.ogg
 5;sound/creature/gilneanvenf/vo_gilneanvenf_vendor01.ogg
 6;sound/creature/ogre/mogreaggro1.ogg
+10;sound/creature/ogre/mogreattack1.ogg
+11;sound/creature/ogre/mogrewoundcritical1.ogg
 7;sound/creature/murloc/mmurlocaggro.ogg
 8;sound/character/orc/orcvocalmale/orcmalehello01.ogg
 9;sound/creature/orcmalestandardnpc/orcmalestandardnpcattack01.ogg
@@ -68,6 +70,20 @@ def test_spoken():
     assert not gv.spoken("Thank you.", 1.0)  # a stock Whisper hallucination
     assert not gv.spoken("one two three four five six seven eight nine ten", 1.0)  # too many words for 1 s
     assert gv.clean_text("  well met  ") == "well met." and gv.clean_text("Hail!") == "Hail!"
+
+
+def test_creature_spoken_is_stricter():
+    lex = frozenset({"you", "make", "good", "sacrifice", "die", "insect", "for", "the", "queen", "no", "stop", "it"})
+    ok = lambda t, d=2.0: gv.creature_spoken(t, d, lex)
+    assert ok("You make good sacrifice!") and ok("Die, insects!")  # plural of a known word
+    assert ok("For the Queen Azshara!")  # a lore name among English words
+    assert not ok("Grrrr. Grrrr.")  # a held letter is a growl
+    assert not ok("Na shaving maybe Stainless.")  # mostly not in the lexicon
+    assert not ok("No!")  # one word
+    assert not ok("Thank you<|sv|>.") and not ok("voilà insect die")
+    assert not ok("You stop it.", 8.0)  # three words don't fill an 8 s clip
+    assert gv.spoken("Na shaving maybe Stainless.", 2.0)  # (NPC voice sets keep the lenient check)
+    assert "sacrifice" in gv.lexicon_words() and "grrrr" not in gv.lexicon_words()
 
 
 def _unit(*v):
