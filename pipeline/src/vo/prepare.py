@@ -919,7 +919,8 @@ WATCH_INTERVAL = 30.0
 
 
 def watch(conn: sqlite3.Connection, out: Path, *, interval: float = WATCH_INTERVAL, iterations: int | None = None,
-          sleep: Callable[[float], None] | None = None, log: Callable[[str], None] = print, **kw) -> int:
+          sleep: Callable[[float], None] | None = None, log: Callable[[str], None] = print,
+          auto_vary: int | None = None, **kw) -> int:
     """`vo prepare --watch`: a full `prepare` pass (review actions, Lexicon samples of corrected names, Candidates of
     regenerated Archetypes, the locks), then every `interval` seconds another pass if the Approval page queued
     actions since (or the last pass failed). The models stay loaded between passes. `iterations` bounds the loop (for
@@ -930,6 +931,8 @@ def watch(conn: sqlite3.Connection, out: Path, *, interval: float = WATCH_INTERV
     n = passes = 0
     retry = True  # the first pass always runs
     while iterations is None or n < iterations:
+        if auto_vary:  # every game voice and approved variation of one gets `auto_vary` variations, unasked
+            queue_gamevoice_variations(conn, auto_vary, kw.get("only"))
         if retry or pending_actions(conn):
             try:
                 log(summary_text(prepare(conn, out, log=log, **kw)))

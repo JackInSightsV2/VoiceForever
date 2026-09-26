@@ -193,7 +193,8 @@ def main(argv: list[str] | None = None) -> None:
         try:
             if args.watch:
                 try:
-                    prepare.watch(conn, BUILD / "candidates", interval=args.interval, **kw)
+                    prepare.watch(conn, BUILD / "candidates", interval=args.interval,
+                                  auto_vary=args.per if args.vary_gamevoices else None, **kw)
                 except KeyboardInterrupt:
                     print("vo prepare --watch: stopped")
                 return
