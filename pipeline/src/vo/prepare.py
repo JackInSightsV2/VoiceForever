@@ -32,7 +32,8 @@ from typing import Callable, Protocol
 
 import numpy as np
 
-from vo import archetypes, asr, audio, bakeoff_seeds, basevoices, effects, lexicon, lock, tts, voicefeat, voxcpm
+from vo import (archetypes, asr, audio, bakeoff_seeds, basevoices, effects, gamevoice, lexicon, lock, tts, voicefeat,
+                voxcpm)
 
 DEFAULT_CANDIDATES = 8
 DEFAULT_SAMPLES = 3
@@ -331,9 +332,13 @@ def _render_candidates(conn, a: sqlite3.Row, out: Path, engine: Engine, check: _
 
 
 def _add_candidate(conn, a: sqlite3.Row, cid: str, s: int, description: str, samples: np.ndarray, rate: int,
-                   wav: Path, chain: str | None, label: str | None, check: _Check, log) -> None:
+                   wav: Path, chain: str | None, label: str | None, check: _Check, log, anchor_text: str | None = None,
+                   mode: str | None = None) -> None:
     """Write a Candidate anchor and its row. With an anchor chain, the clip as designed is kept as <name>_raw.wav
-    and the processed clip (applied here, once) is the anchor: measured, heard, continued from, locked."""
+    and the processed clip (applied here, once) is the anchor: measured, heard, continued from, locked. A Candidate
+    that doesn't read the Archetype's anchor line (a game voice) brings its own `anchor_text`, and may bring its own
+    continuation `mode`."""
+    anchor_text = anchor_text or a["anchor_text"]
     raw = None
     if chain:
         raw = wav.with_name(f"{wav.stem}_raw.wav")
@@ -342,15 +347,15 @@ def _add_candidate(conn, a: sqlite3.Row, cid: str, s: int, description: str, sam
     write_wav(wav, samples, rate)
     feats = voicefeat.measure(samples, rate, a["gender"] != "female")
     heard = check.heard(wav)
-    w = dialect_wer(a["anchor_text"], heard)
+    w = dialect_wer(anchor_text, heard)
     with conn:
         conn.execute(
             "INSERT OR REPLACE INTO candidates (id, archetype, generation, seed, description, anchor_text, path,"
-            " duration_s, f0, hnr, centroid, asr, wer, status, created_at, anchor_chain, raw_path, label)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)",
-            (cid, a["id"], a["generation"], s, description, a["anchor_text"], str(wav.resolve()),
+            " duration_s, f0, hnr, centroid, asr, wer, status, created_at, anchor_chain, raw_path, label, mode)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)",
+            (cid, a["id"], a["generation"], s, description, anchor_text, str(wav.resolve()),
              round(len(samples) / rate, 3), feats["f0"], feats["hnr"], feats["centroid"], heard, w, _now(), chain,
-             str(raw.resolve()) if raw else None, label))
+             str(raw.resolve()) if raw else None, label, mode))
     log(f"candidate {cid} seed {s}{f' + {chain} chain' if chain else ''}: {len(samples) / rate:.1f}s f0 {feats['f0']}"
         f" hnr {feats['hnr']} WER {w:.0%}")
 
@@ -381,13 +386,51 @@ def seed_from_bakeoff(conn, a: sqlite3.Row, out: Path, check: _Check, root: Path
     return done
 
 
+# Game voice anchors continue in "ultimate" (the anchor also as reference). Measured on orc_m and troll_m's 5 game
+# voice anchors x 3 sample lines: cont vs ultimate WER 3.7% vs 5.2% and WavLM similarity to the anchor 0.961 vs
+# 0.959 (both within noise: one troll line decides the WER), but ultimate held the anchor's pitch closer (mean
+# |f0 difference| 2.55 vs 3.42 semitones), which is the character a human picks the anchor for (ADR-0005).
+GAMEVOICE_MODE = "ultimate"
+
+
+def seed_from_gamevoice(conn, a: sqlite3.Row, out: Path, check: _Check, library: gamevoice.Library,
+                        mode: str = GAMEVOICE_MODE, log=print) -> int:
+    """Add the Archetype's game voice anchors (vo.gamevoice, ADR-0007) as Candidates "<archetype>/gv-<key>", in its
+    current generation, each with its own transcript and continuation `mode` and no anchor chain (the game audio has
+    its character already). Idempotent: one already in the DB with its file on disk is left alone (status and review
+    kept); one a regenerate superseded comes back as pending in the current generation (a note changes the designed
+    Candidates, not the game's voices)."""
+    aid, done = a["id"], 0
+    try:
+        anchors = library.anchors(aid)
+    except gamevoice.Unavailable as e:
+        log(f"{e} (no game voice Candidates this time)")
+        return 0
+    for an in anchors:
+        cid = an.candidate
+        row = conn.execute("SELECT path, status FROM candidates WHERE id = ?", (cid,)).fetchone()
+        if row is not None and _exists(row["path"]):
+            if row["status"] == "superseded":
+                with conn:
+                    conn.execute("UPDATE candidates SET status = 'pending', generation = ?, reviewed_at = ?"
+                                 " WHERE id = ?", (a["generation"], _now(), cid))
+                log(f"candidate {cid}: back from superseded (generation {a['generation']})")
+            continue
+        samples, rate = read_wav(Path(an.path))
+        _add_candidate(conn, a, cid, 0, an.description, samples, rate, out / aid / "gamevoice" / f"{an.key}.wav",
+                       None, an.label, check, log, anchor_text=an.transcript, mode=mode)
+        done += 1
+    return done
+
+
 SAMPLE_TRIES = 3
 
 
 def _continue_audible(engine: Engine, a: sqlite3.Row, c: sqlite3.Row, text: str, idx: int):
     """Continue `text` from the Candidate's anchor, re-seeding when VoxCPM2 returns silence (it occasionally does)."""
     for attempt in range(SAMPLE_TRIES):
-        samples, rate = engine.continue_(text, c["path"], c["anchor_text"], idx + 1000 * attempt, a["mode"] or "cont")
+        samples, rate = engine.continue_(text, c["path"], c["anchor_text"], idx + 1000 * attempt,
+                                         c["mode"] or a["mode"] or "cont")
         try:
             return audio.trim(effects.apply(a["effect_chain"], samples, rate), rate), rate
         except ValueError:
@@ -463,7 +506,8 @@ def _lexicon_voice(conn, npc: int | None, npc_map: dict[int, str]) -> sqlite3.Ro
     aid = npc_map.get(npc) if npc is not None else None
     if aid is None or aid == archetypes.NARRATOR:
         return None
-    rows = conn.execute("SELECT a.id AS archetype, a.mode, a.effect_chain, c.id, c.path, c.anchor_text FROM archetypes a"
+    rows = conn.execute("SELECT a.id AS archetype, COALESCE(c.mode, a.mode) AS mode, a.effect_chain, c.id, c.path,"
+                        " c.anchor_text FROM archetypes a"
                         " JOIN candidates c ON c.archetype = a.id WHERE a.id = ? AND c.status = 'approved'"
                         " ORDER BY c.id", (aid,)).fetchall()
     return next((r for r in rows if _exists(r["path"])), None)
@@ -565,11 +609,15 @@ def prepare(conn: sqlite3.Connection, out: Path, *, engine: Engine | None = None
             narrator: Renderer | None = None, only: list[str] | None = None,
             candidates: int = DEFAULT_CANDIDATES, samples: int = DEFAULT_SAMPLES, design: bool = False,
             import_bakeoff: list[str] | None = None, bakeoff_root: Path = BAKEOFF_ROOT,
+            import_gamevoice: bool = False, gamevoice_library: gamevoice.Library | None = None,
+            gamevoice_root: Path | None = None, listfile: Path | None = None, gamevoice_mode: str = GAMEVOICE_MODE,
             lock_path: Path | None = None, lexicon_path: Path | None = None, areas: list[str] | tuple = (),
             log: Callable[[str], None] = print) -> Summary:
     """See the module docstring. `only` limits rendering (not action consumption or the locks) to those Archetypes,
     and skips the Lexicon samples. `import_bakeoff` seeds those Archetypes' Candidates from the bake-off first (and
     implies `only` them if unset); `design` renders fresh Candidates even where the style guide turns design off.
+    `import_gamevoice` adds game voice Candidates (vo.gamevoice) to every Archetype rendered (`only`, else all), from
+    `gamevoice_library`, else a Library cached under `gamevoice_root` and built from `listfile`.
     `areas` are zone/area names (the world DB's), to flag Lexicon names as zones."""
     s = Summary()
     s.actions = consume_actions(conn, log)
@@ -587,6 +635,10 @@ def prepare(conn: sqlite3.Connection, out: Path, *, engine: Engine | None = None
             raise ValueError(f"no bake-off anchors for {unseeded}; seeded: {', '.join(sorted(bakeoff_seeds.SEEDS))}")
     engine = engine or voxcpm.engine()
     check = _Check(asr_backend, asr_model)
+    if import_gamevoice and gamevoice_library is None:
+        if gamevoice_root is None or listfile is None:
+            raise ValueError("import_gamevoice needs a gamevoice_library, or gamevoice_root and listfile")
+        gamevoice_library = gamevoice.Library(gamevoice_root, listfile, heard=check.heard, log=log)
     s.candidates += _render_narrator(conn, out, narrator or _kokoro_narrator, log)
     if not only:
         s.name_samples = _render_lexicon(conn, out, lambda: engine, narrator or _kokoro_narrator, log)
@@ -597,6 +649,8 @@ def prepare(conn: sqlite3.Connection, out: Path, *, engine: Engine | None = None
             s.candidates += seed_from_bakeoff(conn, a, out, check, bakeoff_root, log)
         if only and aid not in only:
             continue  # (an approved Archetype still gets its current Candidates finished: more may be approved)
+        if import_gamevoice:
+            s.candidates += seed_from_gamevoice(conn, a, out, check, gamevoice_library, gamevoice_mode, log)
         if not (design or archetypes.style(aid).design):
             log(f"{aid} ({a['label']}): no fresh Candidates by design (seeded by --import-bakeoff {aid};"
                 f" --design renders fresh ones)")

@@ -73,15 +73,16 @@ CREATE TABLE IF NOT EXISTS archetypes (
   anchor_chain TEXT, generation INTEGER NOT NULL DEFAULT 0, approved TEXT, approved_at TEXT, updated_at TEXT
 );
 -- A Candidate anchor: VoxCPM2 voice design of the Archetype's anchor line. id is "<archetype>/g<gen>s<i>".
--- Bake-off seeds (vo.bakeoff_seeds) are "<archetype>/<key>" with a label. With an anchor chain (vo.effects), path is
--- the processed anchor and raw_path the clip before it. status: pending | approved | rejected | superseded (an
--- older generation).
+-- Bake-off seeds (vo.bakeoff_seeds) are "<archetype>/<key>" with a label; game voice anchors (vo.gamevoice, ADR-0007)
+-- "<archetype>/gv-<key>", with their own anchor_text (the clips' transcript) and mode (NULL: the Archetype's). With
+-- an anchor chain (vo.effects), path is the processed anchor and raw_path the clip before it. status: pending |
+-- approved | rejected | superseded (an older generation).
 CREATE TABLE IF NOT EXISTS candidates (
   id TEXT PRIMARY KEY, archetype TEXT NOT NULL, generation INTEGER, seed INTEGER,
   description TEXT, anchor_text TEXT, path TEXT, duration_s REAL,
   f0 REAL, hnr REAL, centroid REAL, asr TEXT, wer REAL,
   status TEXT NOT NULL DEFAULT 'pending', created_at TEXT, reviewed_at TEXT,
-  anchor_chain TEXT, raw_path TEXT, label TEXT
+  anchor_chain TEXT, raw_path TEXT, label TEXT, mode TEXT
 );
 CREATE INDEX IF NOT EXISTS candidates_archetype ON candidates (archetype);
 -- Sample lines per Candidate, rendered as continuation from its anchor, as vo run would.
@@ -152,6 +153,7 @@ MIGRATIONS = [
     ("candidates", "anchor_chain", "TEXT"),
     ("candidates", "raw_path", "TEXT"),
     ("candidates", "label", "TEXT"),
+    ("candidates", "mode", "TEXT"),         # a Candidate's own continuation mode (game voice); NULL: the Archetype's
     ("capture", "ingested_at", "TEXT"),     # local ISO time vo ingest stored it (the morning report's "new Capture")
     ("voice_builds", "base_voices", "TEXT"),  # the Archetype's Base Voices when the NPC's was assigned (ADR-0006)
 ]

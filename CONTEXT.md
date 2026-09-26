@@ -35,7 +35,7 @@ _Avoid_: reference clip, ref
 A group of non-humanoid creature types that share one Archetype (e.g. Great Beasts: dragons, demons, giants).
 
 **Candidate**:
-A proposed Anchor for an Archetype, awaiting human review. Every Candidate the reviewer would be happy to hear as an NPC of that race is approved, and becomes a Base Voice.
+A proposed Anchor for an Archetype, awaiting human review. Every Candidate the reviewer would be happy to hear as an NPC of that race is approved, and becomes a Base Voice. Most are designed by VoxCPM2; a game voice Candidate is built from WoW's own NPC voice clips of one speaker (ADR-0007).
 
 **NPC Voice**:
 One NPC's own voice, derived automatically from one Base Voice of its Archetype. There is no per-NPC human step.

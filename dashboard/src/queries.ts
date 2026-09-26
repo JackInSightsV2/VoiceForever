@@ -297,6 +297,8 @@ export function approval(db: Database, candidatesRoot: string) {
         id: c.id, seed: c.seed, generation: c.generation, status: c.status, url: url(c.path), duration_s: c.duration_s,
         approved: c.status === "approved", will_be_approved: willBe.has(c.id),
         label: c.label ?? null, anchor_chain: c.anchor_chain ?? null, raw_url: url(c.raw_path ?? null),
+        // A game voice (ADR-0007) reads its own clips, not the Archetype's anchor line, and may continue in its own mode.
+        game_voice: String(c.id).includes("/gv-"), anchor_text: c.anchor_text ?? null, mode: c.mode ?? null,
         f0: c.f0, hnr: c.hnr, centroid: c.centroid, asr: c.asr, wer: c.wer, samples: samplesBy.get(c.id) ?? [],
       })),
       queued: queuedFor(a.id),

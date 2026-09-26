@@ -2,7 +2,8 @@
 
 Written by `vo prepare` once every Archetype has at least one approved anchor (removed again if one is re-opened);
 read-only on disk. Maps each Archetype to its Base Voices (ADR-0006): `anchors`, one entry per approved Candidate
-(audio path, transcript, description, seed, continuation mode, effect chain, voice id), and fixes the Narrator. With an
+(audio path, transcript, description, seed, continuation mode, effect chain, voice id), and fixes the Narrator. An
+anchor's mode is the Archetype's unless its Candidate has its own (a game voice, ADR-0007). With an
 anchor chain (vo.effects), an entry's `anchor` is the processed clip (`raw_anchor` the design it came from,
 `anchor_chain` the chain): lines continue from the processed clip and are not processed again. `vo run` refuses to
 start without it, and speaks every NPC line as a VoxCPM2 continuation of the NPC's own anchor (vo.voices), or while it
@@ -112,14 +113,14 @@ def entry(conn: sqlite3.Connection, aid: str) -> dict | None:
     a = conn.execute("SELECT label, races, mode, effect_chain FROM archetypes WHERE id = ?", (aid,)).fetchone()
     if a is None:
         return None
-    rows = conn.execute("SELECT id, path, anchor_text, description, seed, anchor_chain, raw_path FROM candidates"
+    rows = conn.execute("SELECT id, path, anchor_text, description, seed, anchor_chain, raw_path, mode FROM candidates"
                         " WHERE archetype = ? AND status = 'approved' ORDER BY id", (aid,)).fetchall()
     out = []
     for r in rows:
         if not r["path"] or not Path(r["path"]).exists():
             continue
         e = {"candidate": r["id"], "anchor": r["path"], "transcript": r["anchor_text"], "description": r["description"],
-             "seed": r["seed"], "mode": a["mode"] or "cont", "effect_chain": a["effect_chain"]}
+             "seed": r["seed"], "mode": r["mode"] or a["mode"] or "cont", "effect_chain": a["effect_chain"]}
         if r["anchor_chain"]:  # `anchor` is the processed clip; the unprocessed design is kept for reference
             e.update(anchor_chain=r["anchor_chain"], raw_anchor=r["raw_path"])
         e["voice_id"] = voice_id(aid, e)

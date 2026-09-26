@@ -436,6 +436,7 @@ function candCard(a, c) {
       ${c.status !== "pending" ? `<span class="tag ${c.status === "approved" ? "ok" : ""}">${esc(c.status)}</span>` : ""}
       ${qd.map((q) => `<span class="queued">queued: ${esc(q.replace("-candidate", ""))}</span>`).join("")}</div>
     ${c.url ? `<audio controls preload="none" src="${esc(c.url)}"></audio>` : `<span class="muted">audio missing</span>`}
+    ${c.game_voice ? `<div class="muted small">WoW's own NPC voice clips, joined (ADR-0007): <i>${esc(c.anchor_text || "")}</i>${c.mode ? ` · continuation <span class=mono>${esc(c.mode)}</span>` : ""}</div>` : ""}
     ${c.anchor_chain ? `<details class="small"><summary class="muted">anchor through the <span class=mono>${esc(c.anchor_chain)}</span> chain; before it</summary>${c.raw_url ? `<audio controls preload="none" src="${esc(c.raw_url)}"></audio>` : ""}</details>` : ""}
     <div class="metrics">${metric("f0", c.f0, " Hz")}${metric("HNR", c.hnr, " dB")}${metric("centroid", c.centroid, " Hz")}
       <span title="${esc(c.asr || "")}"><span class="muted">WER</span> <b class="${c.wer > 0.15 ? "bad" : ""}">${pct(c.wer)}</b></span></div>
