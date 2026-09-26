@@ -10,8 +10,8 @@ grunts. `vo prepare --import-gamevoice` turns each distinct speaker into a Candi
 2. Clips: downloaded by FileDataID from wago.tools for Forever's build (a clip the build doesn't have is skipped and
    remembered), decoded, trimmed and resampled to RATE, then transcribed with the pipeline's Whisper. A clip whose
    transcript isn't speech (empty, a grunt, a Whisper hallucination, too many words for its length) is dropped.
-3. Speakers: kits are merged when their voices are the same person (WavLM-SV, complete linkage at SAME_SPEAKER), a
-   clip far from its kit's voice (a heavy effect, another actor) is dropped (CLIP_FLOOR), and up to MAX_SPEAKERS
+3. Speakers: kits are merged when their voices are the same person (WavLM-SV centroids as alike as each kit is with
+   itself, complete linkage; see SAME_SPEAKER), a clip far from its kit's voice (a heavy effect, another actor) is dropped (CLIP_FLOOR), and up to MAX_SPEAKERS
    speakers are kept per Archetype (NPC voice sets first, the standard kit first, then the most audio).
 4. Anchors: per speaker, clean clips joined into an 8-15 s reference (per-clip loudness matched, short gaps, a
    greeting last since continuation copies the delivery of the anchor's end), with the clips' transcripts joined as
@@ -37,7 +37,10 @@ from vo import archetypes, basevoices, display
 CASC_URL = "https://wago.tools/api/casc/{fdid}?version={build}"
 RATE = 24000
 MAX_SPEAKERS = basevoices.MAX
-SAME_SPEAKER = 0.90   # kit centroids at least this similar (every pair) are one person
+# Two kits are one person when their centroids are as alike as each kit is with itself (split_half). Measured on
+# orc_m, human_f, troll_m (Forever 1.60.1): a kit's split-half 0.946-0.996; between kits 0.39-0.985, and only orc_m
+# standard ~ guard (0.985) is inside its kits' own range. SAME_SPEAKER is the fallback for a kit too small to measure.
+SAME_SPEAKER = 0.97
 CLIP_FLOOR = 0.70     # a clip less similar than this to the rest of its kit is dropped
 MIN_CLIP_S = 0.6
 TARGET_S = 12.0       # stop adding clips once the anchor is this long ...
@@ -190,7 +193,7 @@ def find_kits(rows: Iterable[tuple[int, str]], creature: dict[str, str] | None =
 
 # --- 2. clips: download, decode, transcript check --------------------------------------------------------------------
 
-def download(fdid: int, dest: Path, build: str = display.BUILD, timeout: float = 20.0) -> bool:
+def download(fdid: int, dest: Path, build: str = display.BUILD, timeout: float = 150.0) -> bool:
     """Fetch one file of Forever's build by FileDataID; False if the build doesn't have it (HTTP 404)."""
     if dest.exists():
         return True
@@ -265,17 +268,27 @@ def keep_clips(embs: list[np.ndarray], floor: float = CLIP_FLOOR) -> list[bool]:
     return [_cos(e, centroid(embs[:i] + embs[i + 1:])) >= floor for i, e in enumerate(embs)]
 
 
-def group(names: list[str], embs: dict[str, np.ndarray], same: float = SAME_SPEAKER) -> list[list[str]]:
-    """Kits grouped into speakers: complete-linkage agglomeration of their centroids, merging while every pair across
-    the two groups is at least `same` similar. Deterministic: groups keep input order."""
+def split_half(embs: list[np.ndarray]) -> float | None:
+    """How alike one speaker's kit is with itself: cosine of the centroids of its odd and even clips (None under
+    four clips). Two kits are one person when they're as alike as that."""
+    return _cos(centroid(embs[0::2]), centroid(embs[1::2])) if len(embs) >= 4 else None
+
+
+def group(names: list[str], embs: dict[str, np.ndarray], same: float | dict[str, float] = SAME_SPEAKER
+          ) -> list[list[str]]:
+    """Kits grouped into speakers: complete-linkage agglomeration of their centroids. Two kits a, b are one person
+    when their cosine is at least min(same[a], same[b]) (a kit's own split-half similarity; SAME_SPEAKER for a kit
+    not in `same`, or for all with a number); groups merge while every pair across them is, most alike first.
+    Deterministic: groups keep input order."""
+    floor = (lambda n: same) if isinstance(same, (int, float)) else (lambda n: same.get(n, SAME_SPEAKER))
     groups = [[n] for n in names]
     while True:
-        best, pair = same, None
+        best, pair = -1.0, None
         for i in range(len(groups)):
             for j in range(i + 1, len(groups)):
-                s = min(_cos(embs[a], embs[b]) for a in groups[i] for b in groups[j])
-                if s >= best:
-                    best, pair = s, (i, j)
+                cross = [(_cos(embs[a], embs[b]), min(floor(a), floor(b))) for a in groups[i] for b in groups[j]]
+                if all(s >= f for s, f in cross) and min(s for s, _ in cross) > best:
+                    best, pair = min(s for s, _ in cross), (i, j)
         if pair is None:
             return groups
         i, j = pair
@@ -462,10 +475,11 @@ class Library:
         seconds = {f: sum(x.seconds for x in ps) for f, ps in parts.items()}
         ranked = [k for k in rank(kits, seconds) if parts.get(k.folder)]
         cents = {k.folder: centroid(embs[k.folder]) for k in ranked}
+        halves = {f: h for f in cents if (h := split_half(embs[f])) is not None}
         by_folder = {k.folder: k for k in ranked}
         anchors: list[Anchor] = []
         similar = {}
-        for g in group([k.folder for k in ranked], cents):
+        for g in group([k.folder for k in ranked], cents, halves):
             if len(anchors) >= MAX_SPEAKERS:
                 break
             gk = [by_folder[f] for f in g]
@@ -490,7 +504,8 @@ class Library:
         kit_sim = {f"{a} ~ {b}": round(_cos(cents[a], cents[b]), 3) for i, a in enumerate(cents)
                    for b in list(cents)[i + 1:]}
         self._write_plan(aid, anchors, {"kits": clips_n, "spoken": {f: len(v) for f, v in parts.items()},
-                                        "merged_similarity": similar, "kit_similarity": kit_sim})
+                                        "merged_similarity": similar, "kit_similarity": kit_sim,
+                                        "split_half": {f: round(h, 3) for f, h in halves.items()}})
         return anchors
 
     def _write_plan(self, aid: str, anchors: list[Anchor], stats: dict) -> None:

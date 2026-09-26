@@ -87,6 +87,18 @@ def test_group_merges_one_person_complete_linkage():
     assert gv.group(["a", "b", "c", "d"], embs, same=0.96) == [["a", "b"], ["c"], ["d"]]
     assert gv.group(["a", "b", "c", "d"], embs, same=0.90) == [["a", "b", "d"], ["c"]]
     assert gv.group(["a", "c"], embs, same=0.99) == [["a"], ["c"]]
+    # Per-kit floors (each kit's split-half similarity): a pair merges when it's as alike as the looser kit is with
+    # itself. a~b 0.995 passes 0.99; a~d 0.93 fails d's 0.95 but passes 0.92.
+    assert gv.group(["a", "b", "c", "d"], embs, {"a": 0.99, "b": 0.99, "d": 0.95}) == [["a", "b"], ["c"], ["d"]]
+    assert gv.group(["a", "d"], embs, {"a": 0.99, "d": 0.92}) == [["a", "d"]]
+    assert gv.group(["a", "d"], embs, {"a": 0.99}) == [["a"], ["d"]]  # d unmeasured: SAME_SPEAKER
+
+
+def test_split_half():
+    same = [_unit(1, 0.01 * i, 0) for i in range(6)]
+    assert gv.split_half(same) > 0.999 and gv.split_half(same[:3]) is None
+    drift = [_unit(1, 0, 0), _unit(1, 0.2, 0), _unit(1, 0, 0.2), _unit(1, 0.2, 0.2)]
+    assert gv.split_half(drift) == pytest.approx(gv._cos(gv.centroid(drift[0::2]), gv.centroid(drift[1::2])))
 
 
 def test_rank_prefers_npc_sets_and_the_standard_kit():
