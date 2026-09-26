@@ -68,18 +68,53 @@ RACE_PREFIX = {**{p: p for p in archetypes.RACES.values()}, "gilnean": "human", 
 GENDER = {"male": "m", "female": "f", "m": "m", "f": "f"}
 
 # Creature folders whose clips may hold speech (bosses, talking creatures), with their Archetype. Every clip is tried;
-# grunts and roars are dropped by the transcript check, so a folder without speech yields no speaker.
+# grunts and roars are dropped by the transcript check, so a folder without speech yields no speaker. A clip whose name
+# carries the other gender's tag ("..._01_m.ogg", "..._m_aggro_01.ogg"; CLIP_GENDER) is left out. A folder holding both
+# genders' lines maps to a Creature Family id without the gender instead (e.g. "wild_folk"): each clip goes to the
+# gender its name carries, and a clip without a tag is left out.
 CREATURE_KITS: dict[str, str] = {
     "ogre": "ogre_m", "ogremage": "ogre_m", "ogreking": "ogre_m", "ogredumb": "ogre_m", "generic_ogre": "ogre_m",
     "nefarian": "great_beasts_m", "lordvictornefarius": "great_beasts_m", "doomlordkazzak": "great_beasts_m",
     "dreadlord": "great_beasts_m", "ragnaros": "ancients_m", "keeper_remulos": "ancients_m",
-    "banshee": "spirits_f", "abomination": "undead_constructs_m", "fleshgolem": "undead_constructs_m",
-    "gnoll": "wild_folk_m", "furbolg": "wild_folk_m", "quilboar": "wild_folk_m", "centaur": "wild_folk_m",
-    "satyr": "wild_folk_m", "centaurfemale": "wild_folk_f", "dryad": "fey_f", "nagafemale": "naga_f",
-    "naga_female": "naga_f",
+    # Great Beasts, female (the one NPC is a Demon female): succubi, Shivarra, the Eredar twins, Eredar women.
+    "succubus": "great_beasts_f", "succubusvo": "great_beasts_f", "succubusv2": "great_beasts_f",
+    "demon_female_-_succubus": "great_beasts_f", "demon_female_-_shivan": "great_beasts_f",
+    "shivarra": "great_beasts_f", "shivarra_destroyer": "great_beasts_f", "demonshivarra": "great_beasts_f",
+    "lady_sacrolash": "great_beasts_f", "ladysacrolash": "great_beasts_f", "grand_warlock_alythess": "great_beasts_f",
+    "grandwarlockalythess": "great_beasts_f", "eredarfemale": "great_beasts_f", "eredar_female_caster": "great_beasts_f",
+    "eredar_summoner_f": "great_beasts_f", "spiderdemonfemale": "great_beasts_f",
+    # Spirits: banshees, Sylvanas (the Banshee Queen is a Spirits NPC), ghosts.
+    "banshee": "spirits_f", "bansheev2": "spirits_f", "banshee_sylvanas_no_loc": "spirits_f",
+    "weeping_banshee": "spirits_f", "sylvanas": "spirits_f", "sylvanaswindrunner": "spirits_f",
+    "lady_sylvanas_windrunner": "spirits_f", "night_elf_female_ghost": "spirits_f",
+    "ancient_zandalari_spirit_female": "spirits_f", "highborne_ghost": "spirits",
+    # Undead Constructs: abominations, flesh giants, skeletons.
+    "abomination": "undead_constructs_m", "fleshgolem": "undead_constructs_m", "patchwerk": "undead_constructs_m",
+    "northrendfleshgiant": "undead_constructs_m", "abomination_t0_soldier": "undead_constructs",
+    "abomination_t1_soldier": "undead_constructs", "abomination_t2_soldier": "undead_constructs",
+    "abomination_t1_quest_boss": "undead_constructs", "abomination_t2_quest_boss": "undead_constructs",
+    "skeleton_soldier": "undead_constructs", "skeleton_quest_boss": "undead_constructs",
+    # Wild Folk: gnolls, furbolgs, quilboar, centaurs, satyrs; harpies for the women.
+    "gnoll": "wild_folk_m", "furbolg": "wild_folk_m", "furbolg2": "wild_folk_m", "furbolgprimal": "wild_folk_m",
+    "quilboar": "wild_folk", "generic_quilboar": "wild_folk", "quilboarv2": "wild_folk_m",
+    "centaur": "wild_folk_m", "centaur2_male": "wild_folk_m", "centaur_type_one": "wild_folk",
+    "centaur_type_two": "wild_folk", "centaurfemale": "wild_folk_f", "centaur2_female": "wild_folk_f",
+    "satyr": "wild_folk_m", "harpy": "wild_folk_f", "harpyv2": "wild_folk_f", "generic_harpy": "wild_folk_f",
+    "harpy_snatcher": "wild_folk_f", "stoneblood_harpy_b": "wild_folk_f", "stoneblood_harpy_c": "wild_folk_f",
+    # Fey: dryads.
+    "dryad": "fey_f", "dryad3": "fey_f", "dryads": "fey_f", "dream_dryad": "fey_f", "thastalah_dryad": "fey_f",
+    "ardenwealddryadfemale": "fey_f",
+    # Naga women: Vashj, Azshara, sea witches, sirens.
+    "nagafemale": "naga_f", "naga_female": "naga_f", "nagafemalev2": "naga_f", "lady_vashj": "naga_f",
+    "ladyvashj": "naga_f", "baroness_vashj": "naga_f", "seawitch": "naga_f", "siren": "naga_f", "naga_judge": "naga_f",
+    "naga_centaur": "naga_f", "naga_centaur_boss": "naga_f", "queen_azshara": "naga_f", "azshara": "naga_f",
+    "rage_of_azshara": "naga_f", "wrath_of_azshara": "naga_f", "vision_of_queen_azshara": "naga_f",
 }
-# Creature clips that are never speech, by file name: combat grunts and roars.
-CREATURE_SKIP = re.compile(r"attack|wound|death|roar|footstep|breath|spellcast|emote|swing|clickable|stand|run|walk")
+# Creature clips that are never speech, by file name: combat grunts and roars, hisses, singing, loops.
+CREATURE_SKIP = re.compile(r"attack|wound|death|roar|footstep|breath|spellcast|emote|swing|clickable|stand|run|walk"
+                           r"|hiss|chuff|exertion|_sing|snakefoot|_loop_")
+CLIP_GENDER = re.compile(r"_(m|f)(?=_|\.ogg$)")  # a creature clip's gender tag
+MAX_CREATURE_CLIPS = 40  # clips tried per creature folder (spoken kinds first): plenty for one speaker's anchor
 
 # Transcripts that aren't speech: interjections a grunt is written as, and Whisper's stock hallucinations.
 INTERJECTIONS = {"ah", "aah", "ahh", "argh", "arg", "ugh", "uh", "uhh", "um", "hmm", "hm", "hmph", "huh", "oh", "ooh",
@@ -152,6 +187,16 @@ def npc_kit(path: str) -> tuple[str, str, str] | None:
     return None
 
 
+def creature_archetype(target: str, name: str) -> str | None:
+    """The Archetype of a creature folder's clip `name`: `target` (its CREATURE_KITS value) unless the name carries
+    the other gender's tag; for a Creature Family id without a gender, that family and the name's tag (None without
+    one)."""
+    m = CLIP_GENDER.search(name)
+    if target.rpartition("_")[2] in ("m", "f"):
+        return None if m and m[1] != target[-1] else target
+    return f"{target}_{m[1]}" if m else None
+
+
 def read_listfile(path: Path) -> Iterable[tuple[int, str]]:
     """(FileDataID, lower-case path) of every sound/creature Ogg clip in the community listfile."""
     with open(path, encoding="utf-8", errors="replace") as f:
@@ -166,8 +211,9 @@ def read_listfile(path: Path) -> Iterable[tuple[int, str]]:
 
 def find_kits(rows: Iterable[tuple[int, str]], creature: dict[str, str] | None = None) -> dict[str, list[Kit]]:
     """{archetype id: [Kit]} from listfile rows: every NPC voice set, and the listed creature folders. Only NPC voice
-    set clips of a known kind are kept (every such clip is spoken); creature folders keep every clip. Kits are in
-    folder order, their clips in path order."""
+    set clips of a known kind are kept (every such clip is spoken); creature folders keep every clip that isn't a
+    grunt by name (CREATURE_SKIP) and is of the Archetype's gender (creature_archetype), up to MAX_CREATURE_CLIPS
+    (spoken kinds first, then path order). Kits are in folder order, their clips in path order."""
     creature = CREATURE_KITS if creature is None else creature
     kits: dict[tuple[str, str], Kit] = {}
     for fdid, p in rows:
@@ -180,13 +226,19 @@ def find_kits(rows: Iterable[tuple[int, str]], creature: dict[str, str] | None =
             kit = kits.setdefault((aid, folder), Kit(aid, folder, key, "npc"))
         else:
             parts = p.split("/")
-            if len(parts) != 4 or parts[2] not in creature or CREATURE_SKIP.search(parts[3]):
+            # the folder's own name is left out of the grunt check: "windrunner" isn't a run
+            if len(parts) != 4 or parts[2] not in creature or CREATURE_SKIP.search(parts[3].replace(parts[2], "")):
                 continue
-            aid, folder, k = creature[parts[2]], parts[2], kind(p)
+            aid, folder, k = creature_archetype(creature[parts[2]], parts[3]), parts[2], kind(p)
+            if aid is None:
+                continue
             kit = kits.setdefault((aid, folder), Kit(aid, folder, folder, "creature"))
         kit.clips.append(Clip(fdid, p, k))
     out: dict[str, list[Kit]] = {}
+    order = {k: i for i, k in enumerate(KINDS)}
     for (aid, _), kit in sorted(kits.items()):
+        if kit.source == "creature":
+            kit.clips = sorted(kit.clips, key=lambda c: (order.get(c.kind, len(KINDS)), c.path))[:MAX_CREATURE_CLIPS]
         kit.clips.sort(key=lambda c: c.path)
         out.setdefault(aid, []).append(kit)
     for group_ in out.values():  # two sets with one kit name (goblinguardm, goblinmaleguardnpc): key by folder

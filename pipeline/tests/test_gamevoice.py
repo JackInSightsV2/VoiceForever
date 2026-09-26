@@ -62,6 +62,41 @@ def test_kits_from_the_listfile(listfile):
     assert all(c.fdid not in (2, 7, 8) for ks in kits.values() for k in ks for c in k.clips)
 
 
+def test_creature_archetype_by_gender_tag():
+    ca = gv.creature_archetype
+    assert ca("naga_f", "vo_801_naga_female_01_f.ogg") == "naga_f"
+    assert ca("naga_f", "coil_ladyvashj_slay01.ogg") == "naga_f"  # no tag: the folder's Archetype
+    assert ca("naga_f", "vo_82_naga_judge_03_m.ogg") is None  # the other gender's line
+    assert ca("wild_folk", "vo_100_centaur_type_one_01_f.ogg") == "wild_folk_f"  # a mixed folder: the clip's tag
+    assert ca("spirits", "vo_82_highborne_ghost_m_aggro_01.ogg") == "spirits_m"
+    assert ca("wild_folk", "vo_100_centaur_type_one_aggro_01.ogg") is None  # mixed, untagged
+    assert ca("great_beasts_f", "vo_70_eredar_summoner_f_01.ogg") == "great_beasts_f"
+    assert ca("great_beasts_f", "mon_eredarfemale_melee_aggro_01.ogg") == "great_beasts_f"  # "female" isn't a tag
+
+
+def test_creature_folders_split_by_gender_skip_grunts_and_are_capped(tmp_path, monkeypatch):
+    rows = [(100 + 50 * (g == "m") + i, f"sound/creature/centaur_type_one/vo_100_centaur_type_one_{i:02d}_{g}.ogg")
+            for i in range(1, 6) for g in "mf"]
+    rows += [(200, "sound/creature/centaur_type_one/vo_100_centaur_type_one_attack_01.ogg"),
+             (300, "sound/creature/lady_sylvanas_windrunner/vo_70_lady_sylvanas_windrunner_01.ogg"),
+             (301, "sound/creature/lady_sylvanas_windrunner/mon_sylvanas_wound_01.ogg")]
+    rows += [(400 + i, f"sound/creature/shivarra_destroyer/vo_70_shivarra_destroyer_{i:02d}.ogg") for i in range(5)]
+    rows += [(500, "sound/creature/shivarra_destroyer/vo_70_shivarra_greeting_01.ogg")]
+    creature = {"centaur_type_one": "wild_folk", "lady_sylvanas_windrunner": "spirits_f",
+                "shivarra_destroyer": "great_beasts_f"}
+    monkeypatch.setattr(gv, "MAX_CREATURE_CLIPS", 3)
+    kits = gv.find_kits(rows, creature)
+    assert sorted(kits) == ["great_beasts_f", "spirits_f", "wild_folk_f", "wild_folk_m"]
+    (f,), (m,) = kits["wild_folk_f"], kits["wild_folk_m"]
+    assert [c.fdid for c in f.clips] == [101, 102, 103] and [c.fdid for c in m.clips] == [151, 152, 153]
+    assert all(c.path.endswith("_f.ogg") for c in f.clips) and all(c.path.endswith("_m.ogg") for c in m.clips)
+    assert (f.key, f.folder, f.source) == ("centaur_type_one", "centaur_type_one", "creature")
+    # The folder's own name doesn't trip the grunt check ("windrunner" isn't a run); a wound clip still does.
+    assert [c.fdid for c in kits["spirits_f"][0].clips] == [300]
+    # Capped with the spoken kinds kept first, then path order.
+    assert [c.fdid for c in kits["great_beasts_f"][0].clips] == [400, 401, 500]
+
+
 def test_spoken():
     assert gv.spoken("Lok'tar, friend.", 1.0)
     assert gv.spoken("What do you want?", 1.2)
