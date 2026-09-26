@@ -284,10 +284,11 @@ def test_review_actions_accept_and_correct_are_consumed_by_prepare(conn, tmp_pat
     _act(conn, "accept-lexicon", "Nobody")                          # invalid: dropped
     _act(conn, "retry-line", "1")                                   # vo run's: left queued
     s, _ = _prepare(conn, tmp_path)
-    assert s.actions == 4 and s.names_reviewed == 2
+    assert s.actions == 4 and s.names_reviewed == 1
     rows = {r["name"]: r for r in conn.execute("SELECT * FROM lexicon")}
     assert (rows["Barov"]["status"], rows["Barov"]["spelling"]) == ("accepted", "Barov")  # the draft, as heard
-    assert (rows["Qiraji"]["status"], rows["Qiraji"]["spelling"]) == ("corrected", "Kee-rah-jee")
+    # A correction is a new spelling to hear: back to review until accepted.
+    assert (rows["Qiraji"]["status"], rows["Qiraji"]["spelling"]) == ("pending", "Kee-rah-jee")
     assert rows["Magni"]["status"] == "pending"
     assert conn.execute("SELECT action FROM review_actions WHERE consumed_at IS NULL").fetchall()[0][0] == "retry-line"
     # vo run leaves them for vo prepare.
@@ -309,9 +310,12 @@ def test_lexicon_lock_written_once_every_top_name_is_reviewed(conn, tmp_path):
     assert s.lexicon_lock == "open" and not path.exists()
     _act(conn, "correct-lexicon", names[-1], {"spelling": "Mag-nee"})
     s, _ = _prepare(conn, tmp_path)
+    assert s.lexicon_lock == "open"  # the corrected spelling still has to be heard and accepted
+    _act(conn, "accept-lexicon", names[-1])
+    s, _ = _prepare(conn, tmp_path)
     assert s.lexicon_lock == "written" and not path.stat().st_mode & 0o222  # read-only
     data = lexicon.require(conn, path)
-    assert data["entries"]["Magni"] == {"spelling": "Mag-nee", "draft": "Magnee", "status": "corrected", "lines": 1}
+    assert data["entries"]["Magni"] == {"spelling": "Mag-nee", "draft": "Magnee", "status": "accepted", "lines": 1}
     assert set(data["entries"]) == set(names)
     s, _ = _prepare(conn, tmp_path)
     assert s.lexicon_lock == "unchanged"

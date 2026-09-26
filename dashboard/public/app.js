@@ -467,7 +467,7 @@ function lexiconSection(x) {
   return `<h2 id="lexicon">Lexicon <span class="muted">(${p.reviewed} / ${p.total} top names reviewed)</span></h2>
   <p class="muted">The most-spoken lore names, each with a drafted respelling and a sample rendered with it (the voice is
   named on each: the Narrator, or the approved anchor of the NPC's Archetype). Accept it, or type a better spelling
-  and save. <span class=mono>vo prepare</span> applies these, re-renders corrected samples, and writes
+  and try it: the name comes back with a new sample to verify. <span class=mono>vo prepare</span> applies these, and writes
   <span class=mono>lexicon.json</span> once all are reviewed. ${fmt(x.auto)} other names are drafted automatically and
   respelled when ASR keeps missing them.</p>
   <section class="card">
@@ -503,7 +503,7 @@ function lexRow(n) {
     <div class="lexedit">
       <input data-spell="${esc(n.name)}" value="${esc(n.spelling)}" maxlength="120" aria-label="Spelling for ${esc(n.name)}" spellcheck="false">
       <button class="primary" data-lex="accept" data-target="${esc(n.name)}">Accept</button>
-      <button data-lex="correct" data-target="${esc(n.name)}">Save correction</button>
+      <button data-lex="correct" data-target="${esc(n.name)}">Try this spelling</button>
     </div>
     ${n.draft !== n.spelling ? `<div class="muted small">Draft: <span class=mono>${esc(n.draft)}</span></div>` : ""}
   </div>`;

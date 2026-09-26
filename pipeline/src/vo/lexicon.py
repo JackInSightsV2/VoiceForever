@@ -387,6 +387,8 @@ def sync(conn: sqlite3.Connection, areas: Iterable[str] = (), top: int = TOP) ->
                     alts = alternatives(r["name"])
                     alt = min(r["alt"], len(alts) - 1)
                     spelling = alts[alt]
+                elif r["draft"] == d and r["spelling"]:
+                    spelling, alt = r["spelling"], 0  # pending: keep a spelling the reviewer is trying
                 else:
                     spelling, alt = d, 0
                 conn.execute("UPDATE lexicon SET lines = ?, rank = ?, npc = ?, zone = ?, example_line = ?, draft = ?,"
@@ -433,9 +435,11 @@ def _correct(conn: sqlite3.Connection, row: sqlite3.Row) -> str:
     spelling = str((json.loads(row["payload"]) if row["payload"] else {}).get("spelling") or "").strip()
     if not spelling or len(spelling) > MAX_SPELLING or "\n" in spelling:
         raise ValueError("a correction needs a one-line spelling")
-    conn.execute("UPDATE lexicon SET status = 'corrected', spelling = ?, reviewed_at = ?, updated_at = ? WHERE name = ?",
-                 (spelling, _now(), _now(), r["name"]))
-    return f"Lexicon {r['name']}: corrected to {spelling!r}"
+    # A correction is a new spelling to hear, not a verdict: the name goes back to review until its re-rendered sample
+    # is accepted.
+    conn.execute("UPDATE lexicon SET status = 'pending', spelling = ?, reviewed_at = NULL, updated_at = ? WHERE name = ?",
+                 (spelling, _now(), r["name"]))
+    return f"Lexicon {r['name']}: trying {spelling!r} (back to review)"
 
 
 ACTIONS: dict[str, Callable[[sqlite3.Connection, sqlite3.Row], str]] = {
