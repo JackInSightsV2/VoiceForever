@@ -14,27 +14,31 @@ The offline data behind Core Content: the VMaNGOS world database (quest text, go
 ## Voices
 
 **Archetype**:
-A human-approved template voice for one race and gender, or one Creature Family, fixed by its Anchor. A race and gender may have several.
-_Avoid_: base voice, base archetype
+A human-approved voice template for one race and gender, or one Creature Family, fixed by its Base Voices. A race and gender may have several. An Archetype is approved once it has at least one Base Voice.
+_Avoid_: base archetype
+
+**Base Voice**:
+One approved Anchor of an Archetype: a different person of that race and gender. An Archetype has up to eight. Its NPCs are spread across them, and Neighbours get different ones where possible.
+_Avoid_: "the Archetype anchor" (there may be several)
 
 **Approval Gate**:
-The only human step before an unattended run: approving Archetypes and the Lexicon's top names. Approval can be incremental: a partial run voices the lines of Archetypes approved so far, and the rest wait.
+The only human step before an unattended run: approving Base Voices for every Archetype and the Lexicon's top names. Approval can be incremental: a partial run voices the lines of Archetypes approved so far, and the rest wait.
 
 **Lexicon**:
 Phonetic spellings for lore names (e.g. Kel'Thuzad), used in spoken audio. The most frequent names are human-approved; the rest are drafted and ASR-checked automatically.
 
 **Anchor**:
-The short clip that fixes a voice's identity. Every line of that voice is generated as a continuation of its anchor. An Archetype's anchor is picked by ear; an NPC's anchor is designed and selected automatically.
+The short clip that fixes a voice's identity. Every line of that voice is generated as a continuation of its anchor. An Archetype's anchors (its Base Voices) are picked by ear; an NPC's anchor is derived from its Base Voice automatically.
 _Avoid_: reference clip, ref
 
 **Creature Family**:
 A group of non-humanoid creature types that share one Archetype (e.g. Great Beasts: dragons, demons, giants).
 
 **Candidate**:
-An Archetype awaiting human approval.
+A proposed Anchor for an Archetype, awaiting human review. Every Candidate the reviewer would be happy to hear as an NPC of that race is approved, and becomes a Base Voice.
 
 **NPC Voice**:
-One NPC's own voice, derived automatically from an Archetype of its race and gender. There is no per-NPC human step.
+One NPC's own voice, derived automatically from one Base Voice of its Archetype. There is no per-NPC human step.
 _Avoid_: hand-crafted voice
 
 **Neighbours**:

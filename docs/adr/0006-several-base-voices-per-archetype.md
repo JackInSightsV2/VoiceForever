@@ -1,0 +1,9 @@
+---
+status: accepted (supersedes the one-anchor-per-Archetype assumption in ADR-0004 and ADR-0005)
+---
+
+# An Archetype has several Base Voices, and its NPCs are spread across them
+
+ADR-0004 and ADR-0005 assumed one approved anchor per Archetype, with every NPC Voice a DSP shift of it. For big Archetypes that means one person with hundreds of variations. There are 357 human males, and a pitch, formant and pace shift of up to ±2 semitones and ±6% can't make them sound like 357 people. The DSP-shifted NPCs were already only 0.95–0.96 apart by speaker embedding (ADR-0005). So the Approval Gate now approves up to eight Candidates per Archetype. Each one is a Base Voice: a different person, picked by ear, so it keeps the character ADR-0004 needs. An Archetype counts as approved once it has one. The reviewer approves every Candidate they'd be happy to hear as an NPC of that race. Approving adds a Base Voice without demoting the others, unapproving withdraws one, and a regenerate keeps the ones already approved.
+
+`vo voices` assigns every NPC one Base Voice. It is deterministic, balanced across the Base Voices, and Neighbour-aware: in NPC id order, each NPC takes the Base Voice least used among its same-Archetype Neighbours assigned so far. Ties go to the least-used Base Voice overall. The ADR-0005 DSP shift, ceiling and Neighbour floor then apply on top, with the ceiling measured against the NPC's own Base Voice. The assignment is sticky while an Archetype's set of Base Voices stays the same, so a new NPC doesn't move voices that are already built. Adding or withdrawing a Base Voice re-assigns that Archetype's NPCs, and only the NPCs whose Base Voice changed are rebuilt. On Core Content, eight human_m Base Voices get 44–45 NPCs each, and 103 of 1,915 same-Archetype Neighbour pairs share a Base Voice (about 239 would at random).
