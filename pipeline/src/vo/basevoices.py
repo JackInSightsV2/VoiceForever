@@ -25,6 +25,10 @@ from vo import archetypes, lock, neighbours
 MAX = 8  # approved Candidates (Base Voices) per Archetype
 
 
+def plural(n: int) -> str:
+    return f"{n} Base Voice{'' if n == 1 else 's'}"
+
+
 def signature(bases: list[str]) -> str:
     """How voice_builds.base_voices records an Archetype's set of Base Voices."""
     return json.dumps(sorted(bases))
@@ -107,7 +111,7 @@ class Spread:
 
     def text(self) -> str:
         c = sorted(self.counts.values())
-        return (f"{self.archetype}: {len(self.counts)} Base Voices over {sum(c)} NPCs (per voice {c[0]}-{c[-1]});"
+        return (f"{self.archetype}: {plural(len(self.counts))} over {sum(c)} NPCs (per voice {c[0]}-{c[-1]});"
                 f" {self.shared} of {self.pairs} same-Archetype Neighbour pairs share one")
 
 

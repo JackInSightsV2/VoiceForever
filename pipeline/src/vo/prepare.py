@@ -141,12 +141,12 @@ def _approve(conn: sqlite3.Connection, row: sqlite3.Row) -> str:
     aid, now = c["archetype"], _now()
     have = base_voices(conn, aid)
     if cid in have:
-        return f"{aid}: {cid} already approved ({len(have)} Base Voices)"
+        return f"{aid}: {cid} already approved ({basevoices.plural(len(have))})"
     if len(have) >= basevoices.MAX:
         raise ValueError(f"{aid} already has {len(have)} approved Base Voices (at most {basevoices.MAX});"
                          f" unapprove one first")
     conn.execute("UPDATE candidates SET status = 'approved', reviewed_at = ? WHERE id = ?", (now, cid))
-    return f"{aid}: approved {cid} ({len(_sync_approved(conn, aid, now))} Base Voices)"
+    return f"{aid}: approved {cid} ({basevoices.plural(len(_sync_approved(conn, aid, now)))})"
 
 
 def _unapprove(conn: sqlite3.Connection, row: sqlite3.Row) -> str:
@@ -158,7 +158,7 @@ def _unapprove(conn: sqlite3.Connection, row: sqlite3.Row) -> str:
     aid, now = c["archetype"], _now()
     status = "pending" if c["generation"] == c["current"] else "superseded"
     conn.execute("UPDATE candidates SET status = ?, reviewed_at = ? WHERE id = ?", (status, now, cid))
-    return f"{aid}: unapproved {cid} ({len(_sync_approved(conn, aid, now))} Base Voices)"
+    return f"{aid}: unapproved {cid} ({basevoices.plural(len(_sync_approved(conn, aid, now)))})"
 
 
 def _reject(conn: sqlite3.Connection, row: sqlite3.Row) -> str:
@@ -662,7 +662,7 @@ def summary_text(s: Summary) -> str:
     lex_note = {"open": "lexicon.json not written until every top name is reviewed", "written": "lexicon.json written",
                 "unchanged": "lexicon.json unchanged"}[s.lexicon_lock]
     gate = "Approval Gate complete" if s.lock != "open" and s.lexicon_lock != "open" else "Approval Gate open"
-    return (f"{s.approved}/{s.archetypes} Archetypes approved ({s.base_voices} Base Voices); rendered {s.candidates} candidates and {s.samples}"
-            f" samples; applied {s.actions} review actions; {lock_note}. Lexicon: {s.names} names,"
+    return (f"{s.approved}/{s.archetypes} Archetypes approved ({s.base_voices} Base Voices); rendered {s.candidates}"
+            f" candidates and {s.samples} samples; applied {s.actions} review actions; {lock_note}. Lexicon: {s.names} names,"
             f" {s.names_reviewed}/{s.names_top} top names reviewed, {s.name_samples} samples rendered; {lex_note}."
             f" {gate}.")
