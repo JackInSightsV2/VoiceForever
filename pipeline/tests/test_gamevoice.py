@@ -222,7 +222,7 @@ def test_library_keeps_distinct_speakers_apart_and_caps_them(tmp_path, monkeypat
     kits = {"orc_m": [gv.Kit("orc_m", f"k{i}", f"k{i}", "npc", [gv.Clip(10 * i + j, f"k{i}/{j}", "greeting")
                                                                  for j in range(1, 5)]) for i in range(1, 11)]}
     anchors = _library(tmp_path, fake, kits).anchors("orc_m")
-    assert len(anchors) == gv.MAX_SPEAKERS == basevoices.MAX
+    assert len(anchors) == gv.MAX_SPEAKERS == 8
     assert len({a.candidate for a in anchors}) == gv.MAX_SPEAKERS and all("_" not in a.key for a in anchors)
 
 

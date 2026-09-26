@@ -33,11 +33,11 @@ from typing import Callable, Iterable
 
 import numpy as np
 
-from vo import archetypes, basevoices, display
+from vo import archetypes, display
 
 CASC_URL = "https://wago.tools/api/casc/{fdid}?version={build}"
 RATE = 24000
-MAX_SPEAKERS = basevoices.MAX
+MAX_SPEAKERS = 8  # distinct game-voice speakers kept per Archetype
 # Two kits are one person when their centroids are as alike as each kit is with itself (split_half). Measured on
 # orc_m, human_f, troll_m (Forever 1.60.1): a kit's split-half 0.946-0.996; between kits 0.39-0.985, and only orc_m
 # standard ~ guard (0.985) is inside its kits' own range. SAME_SPEAKER is the fallback for a kit too small to measure.
