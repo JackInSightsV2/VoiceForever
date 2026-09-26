@@ -75,16 +75,26 @@ CREATE TABLE IF NOT EXISTS archetypes (
 -- A Candidate anchor: VoxCPM2 voice design of the Archetype's anchor line. id is "<archetype>/g<gen>s<i>".
 -- Bake-off seeds (vo.bakeoff_seeds) are "<archetype>/<key>" with a label; game voice anchors (vo.gamevoice, ADR-0007)
 -- "<archetype>/gv-<key>", with their own anchor_text (the clips' transcript) and mode (NULL: the Archetype's). With
--- an anchor chain (vo.effects), path is the processed anchor and raw_path the clip before it. status: pending |
--- approved | rejected | superseded (an older generation).
+-- an anchor chain (vo.effects), path is the processed anchor and raw_path the clip before it. Variations of a
+-- Candidate (vo.variations) are "<source id>~v<k>", with `variation` set. status: pending |
+-- approved | rejected | superseded (an older generation) | retired (vo prepare --retire-unapproved: hidden, not
+-- replaced, no samples; files kept).
 CREATE TABLE IF NOT EXISTS candidates (
   id TEXT PRIMARY KEY, archetype TEXT NOT NULL, generation INTEGER, seed INTEGER,
   description TEXT, anchor_text TEXT, path TEXT, duration_s REAL,
   f0 REAL, hnr REAL, centroid REAL, asr TEXT, wer REAL,
   status TEXT NOT NULL DEFAULT 'pending', created_at TEXT, reviewed_at TEXT,
-  anchor_chain TEXT, raw_path TEXT, label TEXT, mode TEXT
+  anchor_chain TEXT, raw_path TEXT, label TEXT, mode TEXT, variation TEXT
 );
 CREATE INDEX IF NOT EXISTS candidates_archetype ON candidates (archetype);
+-- Variation Candidates (vo.variations) asked for with review action vary-candidate: slots k0 .. k0+n-1 of the
+-- source's variations "<source>~v<k>", rendered by vo prepare (done_at set once every slot is made or dropped).
+-- method: NULL mixes styles and DSP shifts; 'style' is style cloning only, with the note as the style.
+-- A variation Candidate's candidates.variation is JSON: source, method (style | dsp), its style or shift, similarity.
+CREATE TABLE IF NOT EXISTS variation_requests (
+  id INTEGER PRIMARY KEY, action_id INTEGER, source TEXT NOT NULL, archetype TEXT, note TEXT, k0 INTEGER NOT NULL,
+  n INTEGER NOT NULL, method TEXT, created_at TEXT, done_at TEXT
+);
 -- Sample lines per Candidate, rendered as continuation from its anchor, as vo run would.
 CREATE TABLE IF NOT EXISTS candidate_samples (
   candidate TEXT, idx INTEGER, line_id INTEGER, text TEXT, path TEXT, duration_s REAL, asr TEXT, wer REAL,
@@ -154,6 +164,7 @@ MIGRATIONS = [
     ("candidates", "raw_path", "TEXT"),
     ("candidates", "label", "TEXT"),
     ("candidates", "mode", "TEXT"),         # a Candidate's own continuation mode (game voice); NULL: the Archetype's
+    ("candidates", "variation", "TEXT"),    # a variation Candidate's source and method (vo.variations), JSON
     ("capture", "ingested_at", "TEXT"),     # local ISO time vo ingest stored it (the morning report's "new Capture")
     ("voice_builds", "base_voices", "TEXT"),  # the Archetype's Base Voices when the NPC's was assigned (ADR-0006)
 ]

@@ -89,7 +89,7 @@ def test_bakeoff_winners_are_kept():
 
 class FakeEngine:
     def __init__(self):
-        self.design_calls, self.continue_calls = [], []
+        self.design_calls, self.continue_calls, self.clone_calls = [], [], []
 
     @staticmethod
     def _tone(seed: int) -> tuple[np.ndarray, int]:
@@ -105,6 +105,10 @@ class FakeEngine:
 
     def continue_(self, text, anchor, anchor_text, seed, mode="cont"):
         self.continue_calls.append((text, str(anchor), anchor_text, seed, mode))
+        return self._tone(seed)
+
+    def clone(self, text, reference, style, seed):
+        self.clone_calls.append((text, str(reference), style, seed))
         return self._tone(seed)
 
 

@@ -70,6 +70,14 @@ class VoxCPM2:
         mx.random.seed(seed)
         return _collect(self._model().generate(text=text, instruct=description, **SETTINGS))
 
+    def clone(self, text: str, reference: Path | str, style: str, seed: int) -> tuple[np.ndarray, int]:
+        """Controllable cloning (a variation Candidate, vo.variations): the reference clip's timbre, steered by a
+        "(style)" prefix, reading `text`. No continuation prompt: with one, VoxCPM2 reads the style aloud (#10 round 3)."""
+        import mlx.core as mx
+
+        mx.random.seed(seed)
+        return _collect(self._model().generate(text=text, ref_audio=str(reference), instruct=style, **SETTINGS))
+
     def continue_(self, text: str, anchor: Path | str, anchor_text: str, seed: int,
                   mode: str = "cont") -> tuple[np.ndarray, int]:
         """`text` in the anchor's voice: each chunk continues from the anchor clip and its transcript."""

@@ -54,6 +54,13 @@ def main(argv: list[str] | None = None) -> None:
                    help="continuation mode of game voice Candidates (default: vo.prepare.GAMEVOICE_MODE)")
     p.add_argument("--design", action="store_true",
                    help="render fresh voice-design Candidates even for Archetypes seeded from the bake-off (orc_m)")
+    p.add_argument("--retire-unapproved", action="store_true",
+                   help="first retire every unapproved Candidate (designed, bake-off, variations; hidden on the Approval"
+                        " page, files kept) except the game voice Candidates themselves; --archetype limits it")
+    p.add_argument("--vary-gamevoices", action="store_true",
+                   help="queue and render variations (vo.variations) of every game voice Candidate and every approved"
+                        " one derived from one, up to --per each (idempotent); --archetype limits it")
+    p.add_argument("--per", type=int, default=4, help="--vary-gamevoices: variations per source (default 4)")
     p.add_argument("--watch", action="store_true",
                    help="keep running: apply the Approval page's actions as they arrive (approvals, Lexicon"
                         " corrections, regenerations), render what they need, write the locks when complete")
@@ -179,6 +186,10 @@ def main(argv: list[str] | None = None) -> None:
                   lock_path=lock.path(), lexicon_path=lexicon.path(), areas=_areas(args.world),
                   import_gamevoice=args.import_gamevoice, gamevoice_root=args.gamevoice_dir, listfile=args.listfile,
                   gamevoice_mode=args.gamevoice_mode or prepare.GAMEVOICE_MODE)
+        if args.retire_unapproved:
+            prepare.retire_unapproved(conn, args.archetype)
+        if args.vary_gamevoices:
+            prepare.queue_gamevoice_variations(conn, args.per, args.archetype)
         try:
             if args.watch:
                 try:

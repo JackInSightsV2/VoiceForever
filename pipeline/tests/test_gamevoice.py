@@ -286,12 +286,24 @@ def test_import_gamevoice_adds_candidates_and_is_idempotent(orc, tmp_path, monke
     assert (e["transcript"], e["mode"], e["voice_id"]) == ("Transcript of standard.", "ultimate",
                                                           "voxcpm:orc_m@orc_m/gv-standard")
 
-    # A regenerate supersedes the pending one; a re-import brings it back into the new generation, unrendered.
+    # A game voice Archetype designs nothing: a regenerate with a note supersedes nothing and queues style
+    # variations of each live game voice, the note as the style (here every one misreads, so none is kept).
     _act(conn, "regenerate-archetype", "orc_m", {"note": "more growl"})
-    _prepare(conn, tmp_path, FakeEngine(), only=["orc_m"])
-    assert conn.execute("SELECT status FROM candidates WHERE id = 'orc_m/gv-guard_shady'").fetchone()[0] == "superseded"
     eng = FakeEngine()
-    s, _ = _prepare(conn, tmp_path, eng, only=["orc_m"], import_gamevoice=True, gamevoice_library=lib)
+    _prepare(conn, tmp_path, eng, only=["orc_m"], design=True, embed=lambda x, sr: np.array([0.0, 1.0]))
+    row = conn.execute("SELECT status, generation FROM candidates WHERE id = 'orc_m/gv-guard_shady'").fetchone()
+    assert tuple(row) == ("pending", 0) and eng.design_calls == []
+    assert [tuple(r) for r in conn.execute("SELECT source, n, method, note FROM variation_requests ORDER BY source")] == [
+        ("orc_m/gv-guard_shady", prepare.REGEN_PER_GAMEVOICE, "style", "more growl"),
+        ("orc_m/gv-standard", prepare.REGEN_PER_GAMEVOICE, "style", "more growl")]
+    assert {c[2] for c in eng.clone_calls} == {"more growl"} and len(eng.clone_calls) == 2 * 2 * 3
+    assert conn.execute("SELECT description FROM archetypes WHERE id = 'orc_m'").fetchone()[0].endswith("more growl.")
+
+    # One superseded before game voice baselines (an older DB) comes back on a re-import, in the current generation.
+    conn.execute("UPDATE candidates SET status = 'superseded' WHERE id = 'orc_m/gv-guard_shady'")
+    conn.execute("UPDATE archetypes SET generation = 1 WHERE id = 'orc_m'")
+    conn.commit()
+    s, _ = _prepare(conn, tmp_path, FakeEngine(), only=["orc_m"], import_gamevoice=True, gamevoice_library=lib)
     row = conn.execute("SELECT status, generation FROM candidates WHERE id = 'orc_m/gv-guard_shady'").fetchone()
     assert tuple(row) == ("pending", 1) and s.candidates == 0
     assert conn.execute("SELECT status FROM candidates WHERE id = 'orc_m/gv-standard'").fetchone()[0] == "approved"

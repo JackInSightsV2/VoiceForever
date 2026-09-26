@@ -154,8 +154,8 @@ def _edit_tts_text(conn: sqlite3.Connection, action: sqlite3.Row) -> None:
 
 # Approval actions (approve/reject a Candidate, regenerate an Archetype, accept/correct a Lexicon name) belong to
 # `vo prepare`, and NPC Voice re-rolls (the Separation page) to `vo voices`; both are left for them.
-PREPARE_ACTIONS = ("approve-candidate", "unapprove-candidate", "reject-candidate", "regenerate-archetype", "accept-lexicon",
-                   "correct-lexicon")
+PREPARE_ACTIONS = ("approve-candidate", "unapprove-candidate", "reject-candidate", "regenerate-archetype", "vary-candidate",
+                   "accept-lexicon", "correct-lexicon")
 VOICES_ACTIONS = ("reroll-voice",)
 ACTIONS: dict[str, Callable[[sqlite3.Connection, sqlite3.Row], None]] = {
     "retry-line": _retry_line,

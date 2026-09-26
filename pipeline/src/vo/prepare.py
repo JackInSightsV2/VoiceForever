@@ -1,7 +1,7 @@
 """`vo prepare`: the Approval Gate's render side.
 
-1. Apply the Approval page's review_actions (approve, unapprove, reject, regenerate with a note; accept or correct a
-   Lexicon name). Approving adds a Candidate to its Archetype's Base Voices (up to basevoices.MAX, ADR-0006) without
+1. Apply the Approval page's review_actions (approve, unapprove, reject, regenerate with a note, make variations of
+   a Candidate; accept or correct a Lexicon name). Approving adds a Candidate to its Archetype's Base Voices (up to basevoices.MAX, ADR-0006) without
    demoting the others; an Archetype is approved once it has one.
 2. Sync the Archetype list from the NPCs (vo.archetypes) and the race style guide into `archetypes`, and the Lexicon's
    names and drafts (vo.lexicon) into `lexicon`.
@@ -10,7 +10,12 @@
    the Candidate's anchor, see vo.effects), measure them (pitch, HNR, spectral centroid, ASR WER), and render a few
    of the Archetype's real lines as continuation from each, so you hear whether a Candidate holds up over lines.
    An Archetype whose style guide turns design off (orc_m) gets no fresh Candidates unless asked (`design=True`);
-   `import_bakeoff` seeds its Candidates from bake-off anchors instead (vo.bakeoff_seeds).
+   `import_bakeoff` seeds its Candidates from bake-off anchors instead (vo.bakeoff_seeds). An Archetype with game
+   voice Candidates (ADR-0007) is on its game voice baseline: nothing is designed for it, and a regenerate with a note
+   queues style variations of its game voices instead.
+   Variation Candidates (vo.variations: "<source>~v<k>", queued by vary-candidate or --vary-gamevoices) are rendered
+   first, with their sample lines. --retire-unapproved retires (hides, keeps) every unapproved Candidate but the
+   game voices.
    For each top Lexicon name, render a sample sentence with its spelling: in the approved anchor of the speaking
    NPC's Archetype (VoxCPM2; its first Base Voice) if there is one, else the Narrator (Kokoro).
 4. Once every Archetype has an approved anchor, write the locked approved_voices.json (vo.lock, every Base Voice of
@@ -32,8 +37,8 @@ from typing import Callable, Protocol
 
 import numpy as np
 
-from vo import (archetypes, asr, audio, bakeoff_seeds, basevoices, effects, gamevoice, lexicon, lock, tts, voicefeat,
-                voxcpm)
+from vo import (archetypes, asr, audio, bakeoff_seeds, basevoices, effects, gamevoice, lexicon, lock, speaker, tts,
+                variations, voicefeat, voxcpm)
 
 DEFAULT_CANDIDATES = 8
 DEFAULT_SAMPLES = 3
@@ -56,8 +61,11 @@ class Engine(Protocol):
     def continue_(self, text: str, anchor: Path | str, anchor_text: str, seed: int,
                   mode: str = "cont") -> tuple[np.ndarray, int]: ...
 
+    def clone(self, text: str, reference: Path | str, style: str, seed: int) -> tuple[np.ndarray, int]: ...
+
 
 Renderer = Callable[[str], tuple[np.ndarray, int]]  # the Narrator: text -> audio
+Embed = Callable[[np.ndarray, int], np.ndarray]  # speaker embedding (vo.speaker)
 
 
 def _now() -> str:
@@ -158,8 +166,11 @@ def _unapprove(conn: sqlite3.Connection, row: sqlite3.Row) -> str:
     if c["status"] != "approved":
         raise ValueError(f"{cid} is not approved ({c['status']})")
     aid, now = c["archetype"], _now()
-    status = "pending" if c["generation"] == c["current"] else "superseded"
-    conn.execute("UPDATE candidates SET status = ?, reviewed_at = ? WHERE id = ?", (status, now, cid))
+    if variations.parent(cid) or c["generation"] == c["current"]:  # a variation is never superseded
+        conn.execute("UPDATE candidates SET status = 'pending', generation = ?, reviewed_at = ? WHERE id = ?",
+                     (c["current"], now, cid))
+    else:
+        conn.execute("UPDATE candidates SET status = 'superseded', reviewed_at = ? WHERE id = ?", (now, cid))
     return f"{aid}: unapproved {cid} ({basevoices.plural(len(_sync_approved(conn, aid, now)))})"
 
 
@@ -172,9 +183,15 @@ def _reject(conn: sqlite3.Connection, row: sqlite3.Row) -> str:
     return f"{c['archetype']}: rejected {cid}"
 
 
+REGEN_PER_GAMEVOICE = 2  # variations per game voice when a game voice Archetype is regenerated with a note
+
+
 def _regenerate(conn: sqlite3.Connection, row: sqlite3.Row) -> str:
     """Append the note to the Archetype's description and start a fresh generation of Candidates. The current
-    generation's pending Candidates are superseded; approved ones stay Base Voices (unapprove to drop one)."""
+    generation's pending designed Candidates are superseded; approved ones stay Base Voices (unapprove to drop one);
+    variations are never superseded (they move to the new generation). An Archetype with game voice Candidates
+    (game voice baseline) designs nothing: the note instead queues REGEN_PER_GAMEVOICE style variations of each of
+    its live game voices, the note as the style (no note: the usual mix of styles and DSP shifts)."""
     aid = row["target"]
     a = conn.execute("SELECT * FROM archetypes WHERE id = ? AND kind != 'narrator'", (aid,)).fetchone()
     if a is None:
@@ -182,12 +199,55 @@ def _regenerate(conn: sqlite3.Connection, row: sqlite3.Row) -> str:
     note = str(_payload(row).get("note") or "").strip()
     notes = json.loads(a["notes"] or "[]") + ([note] if note else [])
     now = _now()
+    if has_gamevoice(conn, aid):
+        sources = [r[0] for r in conn.execute(
+            "SELECT id FROM candidates WHERE archetype = ? AND id LIKE ? AND instr(id, ?) = 0"
+            " AND status IN ('pending', 'approved') ORDER BY id", (aid, f"{aid}/gv-%", variations.SEP))]
+        if not sources:
+            raise ValueError(f"{aid} has no live game voice Candidates to vary")
+        for src in sources:
+            queue_variations(conn, src, note or None, REGEN_PER_GAMEVOICE, row["id"],
+                             method="style" if note else None)
+        conn.execute("UPDATE archetypes SET notes = ?, description = ?, updated_at = ? WHERE id = ?",
+                     (json.dumps(notes), describe(a["base_description"], notes), now, aid))
+        return (f"{aid}: game voice baseline, queued {REGEN_PER_GAMEVOICE} variations of each of {len(sources)} game"
+                f" voices" + (f" in the style {note!r}" if note else ""))
     conn.execute("UPDATE candidates SET status = 'superseded', reviewed_at = ? WHERE archetype = ? AND generation = ?"
-                 " AND status = 'pending'", (now, aid, a["generation"]))
+                 " AND status = 'pending' AND instr(id, ?) = 0", (now, aid, a["generation"], variations.SEP))
+    conn.execute("UPDATE candidates SET generation = ? WHERE archetype = ? AND instr(id, ?) > 0 AND status = 'pending'",
+                 (a["generation"] + 1, aid, variations.SEP))
     conn.execute("DELETE FROM sample_skips WHERE substr(clip, 1, ?) = ?", (len(aid) + 1, f"{aid}/"))
     conn.execute("UPDATE archetypes SET notes = ?, description = ?, generation = generation + 1, updated_at = ?"
                  " WHERE id = ?", (json.dumps(notes), describe(a["base_description"], notes), now, aid))
     return f"{aid}: regenerating (generation {a['generation'] + 1})" + (f" with note {note!r}" if note else "")
+
+
+def has_gamevoice(conn: sqlite3.Connection, aid: str) -> bool:
+    """The Archetype has game voice Candidates (ADR-0007): its game voice baseline, so nothing is designed for it."""
+    return conn.execute("SELECT 1 FROM candidates WHERE archetype = ? AND id LIKE ? AND instr(id, ?) = 0 LIMIT 1",
+                        (aid, f"{aid}/gv-%", variations.SEP)).fetchone() is not None
+
+
+def queue_variations(conn: sqlite3.Connection, source: str, note: str | None, n: int, action_id: int | None = None,
+                     method: str | None = None) -> tuple[int, int]:
+    """Queue n variation slots of `source` (rendered by render_variations); returns (k0, n). The slots follow every
+    variation of it made or queued so far, so a repeated request adds n more."""
+    c = _candidate(conn, source)
+    ids = [r[0] for r in conn.execute("SELECT id FROM candidates WHERE id LIKE ?", (f"{source}{variations.SEP}%",))]
+    last = max(variations.child_ks(ids, source), default=0)
+    queued = conn.execute("SELECT MAX(k0 + n - 1) FROM variation_requests WHERE source = ?", (source,)).fetchone()[0]
+    k0 = max(last, queued or 0) + 1
+    conn.execute("INSERT INTO variation_requests (action_id, source, archetype, note, k0, n, method, created_at)"
+                 " VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (action_id, source, c["archetype"], note, k0, n, method, _now()))
+    return k0, n
+
+
+def _vary(conn: sqlite3.Connection, row: sqlite3.Row) -> str:
+    """Queue variations.N variation Candidates of the target (vo.variations), rendered by this `vo prepare` pass."""
+    cid = row["target"]
+    note = str(_payload(row).get("note") or "").strip() or None
+    k0, n = queue_variations(conn, cid, note, variations.N, row["id"])
+    return f"{cid}: queued variations ~v{k0}..~v{k0 + n - 1}" + (f" with note {note!r}" if note else "")
 
 
 ACTIONS: dict[str, Callable[[sqlite3.Connection, sqlite3.Row], str]] = {
@@ -195,6 +255,7 @@ ACTIONS: dict[str, Callable[[sqlite3.Connection, sqlite3.Row], str]] = {
     "unapprove-candidate": _unapprove,
     "reject-candidate": _reject,
     "regenerate-archetype": _regenerate,
+    variations.ACTION: _vary,  # vary-candidate
     **lexicon.ACTIONS,  # accept-lexicon, correct-lexicon
 }
 
@@ -282,6 +343,7 @@ class Summary:
     approved: int = 0          # Archetypes with at least one approved anchor
     base_voices: int = 0       # approved anchors over all Archetypes
     candidates: int = 0
+    variations: int = 0        # variation Candidates rendered (vo.variations)
     samples: int = 0
     lock: str = ""
     names: int = 0             # Lexicon names found in the lines
@@ -333,11 +395,11 @@ def _render_candidates(conn, a: sqlite3.Row, out: Path, engine: Engine, check: _
 
 def _add_candidate(conn, a: sqlite3.Row, cid: str, s: int, description: str, samples: np.ndarray, rate: int,
                    wav: Path, chain: str | None, label: str | None, check: _Check, log, anchor_text: str | None = None,
-                   mode: str | None = None) -> None:
+                   mode: str | None = None, heard: str | None = None, variation: dict | None = None) -> None:
     """Write a Candidate anchor and its row. With an anchor chain, the clip as designed is kept as <name>_raw.wav
     and the processed clip (applied here, once) is the anchor: measured, heard, continued from, locked. A Candidate
     that doesn't read the Archetype's anchor line (a game voice) brings its own `anchor_text`, and may bring its own
-    continuation `mode`."""
+    continuation `mode`. `heard`: its ASR transcript if already taken; `variation`: a variation's source and method."""
     anchor_text = anchor_text or a["anchor_text"]
     raw = None
     if chain:
@@ -346,16 +408,16 @@ def _add_candidate(conn, a: sqlite3.Row, cid: str, s: int, description: str, sam
         samples = effects.apply(chain, samples, rate)
     write_wav(wav, samples, rate)
     feats = voicefeat.measure(samples, rate, a["gender"] != "female")
-    heard = check.heard(wav)
+    heard = check.heard(wav) if heard is None else heard
     w = dialect_wer(anchor_text, heard)
     with conn:
         conn.execute(
             "INSERT OR REPLACE INTO candidates (id, archetype, generation, seed, description, anchor_text, path,"
-            " duration_s, f0, hnr, centroid, asr, wer, status, created_at, anchor_chain, raw_path, label, mode)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)",
+            " duration_s, f0, hnr, centroid, asr, wer, status, created_at, anchor_chain, raw_path, label, mode,"
+            " variation) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)",
             (cid, a["id"], a["generation"], s, description, anchor_text, str(wav.resolve()),
              round(len(samples) / rate, 3), feats["f0"], feats["hnr"], feats["centroid"], heard, w, _now(), chain,
-             str(raw.resolve()) if raw else None, label, mode))
+             str(raw.resolve()) if raw else None, label, mode, json.dumps(variation) if variation else None))
     log(f"candidate {cid} seed {s}{f' + {chain} chain' if chain else ''}: {len(samples) / rate:.1f}s f0 {feats['f0']}"
         f" hnr {feats['hnr']} WER {w:.0%}")
 
@@ -421,6 +483,145 @@ def seed_from_gamevoice(conn, a: sqlite3.Row, out: Path, check: _Check, library:
                        None, an.label, check, log, anchor_text=an.transcript, mode=mode)
         done += 1
     return done
+
+
+# --- variation Candidates (vo.variations) ----------------------------------------------------------------------------
+
+def _variation_rows(conn, source: str) -> list[dict]:
+    """The `variation` JSON of every variation of `source` made so far."""
+    rows = conn.execute("SELECT id, variation FROM candidates WHERE id LIKE ? AND variation IS NOT NULL",
+                        (f"{source}{variations.SEP}%",)).fetchall()
+    return [json.loads(r["variation"]) for r in rows if variations.parent(r["id"]) == source]
+
+
+def _render_variation(conn, a, src, k: int, method: str, note: str | None, style_only: bool, out: Path,
+                      engine: Engine, check: _Check, embed: Embed, src_emb, tried_shifts: list, log) -> bool:
+    """Render slot k of the source's variations, up to variations.MAX_TRIES times until one passes the gate;
+    True once one is added."""
+    from vo.voices import Shift, apply_shift
+
+    source, cid = src["id"], variations.variation_id(src["id"], k)
+    wav = out / a["id"] / "variations" / f"{source.split('/', 1)[1]}{variations.SEP}{k}.wav"
+    src_label = src["label"] or source.split("/", 1)[1]
+    made = _variation_rows(conn, source)
+    for attempt in range(variations.MAX_TRIES):
+        sd = variations.seed(source, k, attempt)
+        try:
+            if method == "style":
+                style = note if style_only and note else variations.style(
+                    [v.get("style") for v in made if v.get("method") == "style"], k, note)
+                transcript = a["anchor_text"]
+                got, rate = engine.clone(transcript, src["path"], style, sd)
+                samples = audio.trim(np.asarray(got, dtype=np.float32).reshape(-1), rate)
+                what, info = f"style {style!r}", {"method": "style", "style": style}
+            else:
+                used = [Shift(v["pitch_st"], v["formant"], v["pace"]) for v in made if v.get("method") == "dsp"]
+                sh = variations.shift(used + tried_shifts, source, k, attempt)
+                tried_shifts.append(sh)
+                transcript = src["anchor_text"]
+                base, rate = read_wav(Path(src["path"]))
+                samples = apply_shift(base, rate, sh, sd)
+                what = f"DSP {variations.describe_shift(sh)}"
+                info = {"method": "dsp", "pitch_st": sh.pitch_st, "formant": sh.formant, "pace": sh.pace}
+        except ValueError as e:  # silent render
+            log(f"variation {cid} try {attempt + 1}: dropped ({e})")
+            continue
+        write_wav(wav, samples, rate)
+        heard = check.heard(wav)
+        w = dialect_wer(transcript, heard)
+        sim = round(speaker.cosine(embed(samples, rate), src_emb), 4) if src_emb is not None else None
+        verdict = variations.gate(w, sim)
+        if not verdict.ok:
+            log(f"variation {cid} try {attempt + 1} ({what}): dropped, {verdict.reason}")
+            wav.unlink(missing_ok=True)
+            continue
+        label = f"variation of {src_label}: {what}"
+        _add_candidate(conn, a, cid, sd, f"{src['description'] or ''} | {label}".strip(" |"), samples, rate, wav,
+                       None, label, check, log, anchor_text=transcript, mode=src["mode"], heard=heard,
+                       variation={"source": source, **info, "sim": sim, "attempt": attempt, "note": note})
+        log(f"  variation {cid}: {what}, similarity to source {sim}")
+        return True
+    log(f"variation {cid}: no render passed in {variations.MAX_TRIES} tries; slot dropped")
+    return False
+
+
+def render_variations(conn, out: Path, engine: Engine, check: _Check, embed: Embed, log) -> tuple[int, set[str]]:
+    """Render every queued variation request (vo.variations): each slot not yet on disk, as its own Candidate in the
+    source's Archetype (current generation, the source's mode, never through an anchor chain again: the source's
+    anchor already went through it). Returns the variations added and the Archetypes they are in."""
+    done, touched = 0, set()
+    for r in conn.execute("SELECT * FROM variation_requests WHERE done_at IS NULL ORDER BY id").fetchall():
+        src = conn.execute("SELECT * FROM candidates WHERE id = ?", (r["source"],)).fetchone()
+        a = conn.execute("SELECT * FROM archetypes WHERE id = ?", (r["archetype"],)).fetchone()
+        if src is None or a is None or not _exists(src["path"]):
+            log(f"variations of {r['source']}: source anchor missing, request {r['id']} dropped")
+        else:
+            log(f"variations of {src['id']}: ~v{r['k0']}..~v{r['k0'] + r['n'] - 1}")
+            src_emb = embed(*read_wav(Path(src["path"])))
+            tried: list = []
+            for j in range(r["n"]):
+                k = r["k0"] + j
+                row = conn.execute("SELECT path FROM candidates WHERE id = ?",
+                                   (variations.variation_id(src["id"], k),)).fetchone()
+                if row is not None and _exists(row["path"]):
+                    continue
+                m = "style" if r["method"] == "style" else variations.method(j)
+                if _render_variation(conn, a, src, k, m, r["note"], r["method"] == "style", out, engine, check,
+                                     embed, src_emb, tried, log):
+                    done += 1
+                    touched.add(a["id"])
+        with conn:
+            conn.execute("UPDATE variation_requests SET done_at = ? WHERE id = ?", (_now(), r["id"]))
+    return done, touched
+
+
+def pending_variations(conn: sqlite3.Connection) -> int:
+    return conn.execute("SELECT COUNT(*) FROM variation_requests WHERE done_at IS NULL").fetchone()[0]
+
+
+def retire_unapproved(conn: sqlite3.Connection, only: list[str] | None = None, log=print) -> int:
+    """`vo prepare --retire-unapproved`: every Candidate that isn't approved (designed, bake-off, variations) becomes
+    'retired' (hidden on the Approval page, not replaced, no samples; files kept), except the game voice Candidates
+    themselves ("<archetype>/gv-<key>"), the baseline, which stay approvable. `only`: those Archetypes."""
+    q = ("UPDATE candidates SET status = 'retired', reviewed_at = ? WHERE status IN ('pending', 'rejected', 'superseded')"
+         " AND archetype != ? AND NOT (id LIKE '%/gv-%' AND instr(id, ?) = 0)")
+    args: list = [_now(), NARRATOR_ID, variations.SEP]
+    if only:
+        q += f" AND archetype IN ({','.join('?' * len(only))})"
+        args += list(only)
+    with conn:
+        n = conn.execute(q, args).rowcount
+    log(f"retired {n} unapproved Candidates" + (f" of {', '.join(only)}" if only else ""))
+    return n
+
+
+def queue_gamevoice_variations(conn: sqlite3.Connection, per: int = variations.N, only: list[str] | None = None,
+                               log=print) -> int:
+    """`vo prepare --vary-gamevoices`: queue variations of every live game voice Candidate and every approved
+    Candidate derived from one, topping each up to `per` live (not rejected or retired) variations, queued ones
+    counted. Idempotent. Returns the slots queued (the prepare pass renders them)."""
+    total = 0
+    with conn:
+        for c in conn.execute("SELECT id, archetype, status FROM candidates WHERE id LIKE '%/gv-%' ORDER BY id").fetchall():
+            if only and c["archetype"] not in only:
+                continue
+            derived = variations.parent(c["id"]) is not None
+            if c["status"] != "approved" and (derived or c["status"] != "pending"):
+                continue
+            kids = conn.execute("SELECT id, status FROM candidates WHERE id LIKE ?",
+                                (f"{c['id']}{variations.SEP}%",)).fetchall()
+            live = sum(1 for kd in kids if variations.parent(kd["id"]) == c["id"]
+                       and kd["status"] not in ("rejected", "retired"))
+            queued = conn.execute("SELECT COALESCE(SUM(n), 0) FROM variation_requests WHERE source = ? AND done_at IS"
+                                  " NULL", (c["id"],)).fetchone()[0]
+            want = per - live - queued
+            if want <= 0:
+                continue
+            queue_variations(conn, c["id"], None, want)
+            total += want
+            log(f"{c['id']}: queued {want} variations (has {live}, {queued} queued)")
+    log(f"queued {total} game voice variations")
+    return total
 
 
 SAMPLE_TRIES = 3
@@ -612,13 +813,15 @@ def prepare(conn: sqlite3.Connection, out: Path, *, engine: Engine | None = None
             import_gamevoice: bool = False, gamevoice_library: gamevoice.Library | None = None,
             gamevoice_root: Path | None = None, listfile: Path | None = None, gamevoice_mode: str = GAMEVOICE_MODE,
             lock_path: Path | None = None, lexicon_path: Path | None = None, areas: list[str] | tuple = (),
-            log: Callable[[str], None] = print) -> Summary:
+            embed: Embed | None = None, log: Callable[[str], None] = print) -> Summary:
     """See the module docstring. `only` limits rendering (not action consumption or the locks) to those Archetypes,
     and skips the Lexicon samples. `import_bakeoff` seeds those Archetypes' Candidates from the bake-off first (and
     implies `only` them if unset); `design` renders fresh Candidates even where the style guide turns design off.
     `import_gamevoice` adds game voice Candidates (vo.gamevoice) to every Archetype rendered (`only`, else all), from
     `gamevoice_library`, else a Library cached under `gamevoice_root` and built from `listfile`.
-    `areas` are zone/area names (the world DB's), to flag Lexicon names as zones."""
+    `areas` are zone/area names (the world DB's), to flag Lexicon names as zones. Queued variation requests
+    (vary-candidate, a game voice Archetype's regenerate, --vary-gamevoices) are rendered first, whatever `only` is,
+    with their sample lines; `embed` is the speaker embedding they are compared to their source with (vo.speaker)."""
     s = Summary()
     s.actions = consume_actions(conn, log)
     ids = sync_archetypes(conn)
@@ -643,6 +846,14 @@ def prepare(conn: sqlite3.Connection, out: Path, *, engine: Engine | None = None
     if not only:
         s.name_samples = _render_lexicon(conn, out, lambda: engine, narrator or _kokoro_narrator, log)
     npc_map = archetypes.npc_archetypes(conn)
+    if pending_variations(conn):
+        embed = embed or (lambda x, sr: speaker.embedder()(x, sr))
+        made, touched = render_variations(conn, out, engine, check, embed, log)
+        s.variations += made
+        for aid in sorted(touched):
+            a = conn.execute("SELECT * FROM archetypes WHERE id = ?", (aid,)).fetchone()
+            lines = sample_lines(conn, [n for n, x in npc_map.items() if x == aid], samples)
+            s.samples += _render_samples(conn, a, out, engine, check, lines, log)
     for aid in ids:
         a = conn.execute("SELECT * FROM archetypes WHERE id = ?", (aid,)).fetchone()
         if import_bakeoff and aid in import_bakeoff:
@@ -651,6 +862,12 @@ def prepare(conn: sqlite3.Connection, out: Path, *, engine: Engine | None = None
             continue  # (an approved Archetype still gets its current Candidates finished: more may be approved)
         if import_gamevoice:
             s.candidates += seed_from_gamevoice(conn, a, out, check, gamevoice_library, gamevoice_mode, log)
+        if has_gamevoice(conn, aid):
+            log(f"{aid} ({a['label']}): game voice baseline, no designed Candidates (variations of its game voices"
+                f" instead)")
+            lines = sample_lines(conn, [n for n, x in npc_map.items() if x == aid], samples)
+            s.samples += _render_samples(conn, a, out, engine, check, lines, log)
+            continue
         if not (design or archetypes.style(aid).design):
             log(f"{aid} ({a['label']}): no fresh Candidates by design (seeded by --import-bakeoff {aid};"
                 f" --design renders fresh ones)")
@@ -682,9 +899,9 @@ def prepare(conn: sqlite3.Connection, out: Path, *, engine: Engine | None = None
 
 
 def pending_actions(conn: sqlite3.Connection) -> int:
-    """Unconsumed Approval review_actions (the ones `vo prepare` applies)."""
+    """Unconsumed Approval review_actions (the ones `vo prepare` applies), plus variation requests not rendered yet."""
     return conn.execute(f"SELECT COUNT(*) FROM review_actions WHERE consumed_at IS NULL AND action IN"
-                        f" ({','.join('?' * len(ACTIONS))})", tuple(ACTIONS)).fetchone()[0]
+                        f" ({','.join('?' * len(ACTIONS))})", tuple(ACTIONS)).fetchone()[0] + pending_variations(conn)
 
 
 WATCH_INTERVAL = 30.0
@@ -725,6 +942,6 @@ def summary_text(s: Summary) -> str:
                 "unchanged": "lexicon.json unchanged"}[s.lexicon_lock]
     gate = "Approval Gate complete" if s.lock != "open" and s.lexicon_lock != "open" else "Approval Gate open"
     return (f"{s.approved}/{s.archetypes} Archetypes approved ({s.base_voices} Base Voices); rendered {s.candidates}"
-            f" candidates and {s.samples} samples; applied {s.actions} review actions; {lock_note}. Lexicon: {s.names} names,"
+            f" candidates{f', {s.variations} variations' if s.variations else ''} and {s.samples} samples; applied {s.actions} review actions; {lock_note}. Lexicon: {s.names} names,"
             f" {s.names_reviewed}/{s.names_top} top names reviewed, {s.name_samples} samples rendered; {lex_note}."
             f" {gate}.")
