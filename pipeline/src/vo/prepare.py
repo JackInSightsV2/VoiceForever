@@ -644,12 +644,16 @@ def skipped(conn: sqlite3.Connection, clip: str, text: str) -> bool:
     return conn.execute("SELECT 1 FROM sample_skips WHERE clip = ? AND text = ?", (clip, text)).fetchone() is not None
 
 
+_pump: Callable[[], None] = lambda: None  # set by prepare(): apply queued review actions between renders
+
+
 def _render_samples(conn, a: sqlite3.Row, out: Path, engine: Engine, check: _Check, lines: list[tuple[int, str]],
                     log) -> int:
     done = 0
     cands = conn.execute("SELECT * FROM candidates WHERE archetype = ? AND generation = ? AND status IN"
                          " ('pending', 'approved') ORDER BY id", (a["id"], a["generation"])).fetchall()
     for c in cands:
+        _pump()  # a long pass still applies approvals, rejects and Lexicon fixes as they arrive
         if not _exists(c["path"]):
             continue
         for idx, (line_id, text) in enumerate(lines, 1):
@@ -824,6 +828,12 @@ def prepare(conn: sqlite3.Connection, out: Path, *, engine: Engine | None = None
     with their sample lines; `embed` is the speaker embedding they are compared to their source with (vo.speaker)."""
     s = Summary()
     s.actions = consume_actions(conn, log)
+
+    def pump() -> None:
+        s.actions += consume_actions(conn, log)
+
+    global _pump
+    _pump = pump
     ids = sync_archetypes(conn)
     found = lexicon.sync(conn, areas)
     s.names, s.names_top = found["names"], found["top"]
@@ -855,6 +865,7 @@ def prepare(conn: sqlite3.Connection, out: Path, *, engine: Engine | None = None
             lines = sample_lines(conn, [n for n, x in npc_map.items() if x == aid], samples)
             s.samples += _render_samples(conn, a, out, engine, check, lines, log)
     for aid in ids:
+        _pump()
         a = conn.execute("SELECT * FROM archetypes WHERE id = ?", (aid,)).fetchone()
         if import_bakeoff and aid in import_bakeoff:
             s.candidates += seed_from_bakeoff(conn, a, out, check, bakeoff_root, log)
