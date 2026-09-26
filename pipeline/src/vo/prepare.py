@@ -1,19 +1,21 @@
 """`vo prepare`: the Approval Gate's render side.
 
-1. Apply the Approval page's review_actions (approve, reject, regenerate with a note; accept or correct a Lexicon
-   name).
+1. Apply the Approval page's review_actions (approve, unapprove, reject, regenerate with a note; accept or correct a
+   Lexicon name). Approving adds a Candidate to its Archetype's Base Voices (up to basevoices.MAX, ADR-0006) without
+   demoting the others; an Archetype is approved once it has one.
 2. Sync the Archetype list from the NPCs (vo.archetypes) and the race style guide into `archetypes`, and the Lexicon's
    names and drafts (vo.lexicon) into `lexicon`.
-3. For every Archetype without an approved anchor, render N Candidates (VoxCPM2 voice design of its anchor line,
-   seeded, deterministic; with an anchor chain, the designed clip goes through it once and the processed clip is
+3. For every Archetype, render its current generation's N Candidates, approved or not (VoxCPM2 voice design of its
+   anchor line, seeded, deterministic; with an anchor chain, the designed clip goes through it once and the processed clip is
    the Candidate's anchor, see vo.effects), measure them (pitch, HNR, spectral centroid, ASR WER), and render a few
    of the Archetype's real lines as continuation from each, so you hear whether a Candidate holds up over lines.
    An Archetype whose style guide turns design off (orc_m) gets no fresh Candidates unless asked (`design=True`);
    `import_bakeoff` seeds its Candidates from bake-off anchors instead (vo.bakeoff_seeds).
    For each top Lexicon name, render a sample sentence with its spelling: in the approved anchor of the speaking
-   NPC's Archetype (VoxCPM2) if there is one, else the Narrator (Kokoro).
-4. Once every Archetype has an approved anchor, write the locked approved_voices.json (vo.lock); once every top
-   Lexicon name is reviewed, the locked lexicon.json (vo.lexicon). The Approval Gate is complete with both.
+   NPC's Archetype (VoxCPM2; its first Base Voice) if there is one, else the Narrator (Kokoro).
+4. Once every Archetype has an approved anchor, write the locked approved_voices.json (vo.lock, every Base Voice of
+   each Archetype); once every top Lexicon name is reviewed, the locked lexicon.json (vo.lexicon). The Approval Gate
+   is complete with both.
 
 Idempotent and resumable: a clip already in the DB with its file on disk is not rendered again, and every clip is
 committed as it lands. Audio goes under build/candidates/<archetype>/.
@@ -30,7 +32,7 @@ from typing import Callable, Protocol
 
 import numpy as np
 
-from vo import archetypes, asr, audio, bakeoff_seeds, effects, lexicon, lock, tts, voicefeat, voxcpm
+from vo import archetypes, asr, audio, bakeoff_seeds, basevoices, effects, lexicon, lock, tts, voicefeat, voxcpm
 
 DEFAULT_CANDIDATES = 8
 DEFAULT_SAMPLES = 3
@@ -107,34 +109,70 @@ def _payload(row: sqlite3.Row) -> dict:
     return json.loads(row["payload"]) if row["payload"] else {}
 
 
-def _approve(conn: sqlite3.Connection, row: sqlite3.Row) -> str:
-    cid = row["target"]
-    c = conn.execute("SELECT archetype FROM candidates WHERE id = ?", (cid,)).fetchone()
+def base_voices(conn: sqlite3.Connection, aid: str) -> list[str]:
+    """The Archetype's approved Candidates (its Base Voices, ADR-0006), in id order."""
+    return [r[0] for r in conn.execute("SELECT id FROM candidates WHERE archetype = ? AND status = 'approved'"
+                                       " ORDER BY id", (aid,))]
+
+
+def _sync_approved(conn: sqlite3.Connection, aid: str, now: str) -> list[str]:
+    """Keep archetypes.approved (a summary: the first Base Voice, NULL for none) in step with the statuses."""
+    ids = base_voices(conn, aid)
+    at = conn.execute("SELECT MAX(reviewed_at) FROM candidates WHERE archetype = ? AND status = 'approved'",
+                      (aid,)).fetchone()[0]
+    conn.execute("UPDATE archetypes SET approved = ?, approved_at = ?, updated_at = ? WHERE id = ?",
+                 (ids[0] if ids else None, at if ids else None, now, aid))
+    return ids
+
+
+def _candidate(conn: sqlite3.Connection, cid: str) -> sqlite3.Row:
+    c = conn.execute("SELECT c.archetype, c.status, c.generation, a.generation AS current FROM candidates c"
+                     " JOIN archetypes a ON a.id = c.archetype WHERE c.id = ? AND a.kind != 'narrator'",
+                     (cid,)).fetchone()
     if c is None:
         raise ValueError(f"no candidate {cid}")
+    return c
+
+
+def _approve(conn: sqlite3.Connection, row: sqlite3.Row) -> str:
+    """Add the Candidate to its Archetype's Base Voices (others stay approved), up to basevoices.MAX."""
+    cid = row["target"]
+    c = _candidate(conn, cid)
     aid, now = c["archetype"], _now()
-    conn.execute("UPDATE candidates SET status = 'pending' WHERE archetype = ? AND status = 'approved'", (aid,))
+    have = base_voices(conn, aid)
+    if cid in have:
+        return f"{aid}: {cid} already approved ({len(have)} Base Voices)"
+    if len(have) >= basevoices.MAX:
+        raise ValueError(f"{aid} already has {len(have)} approved Base Voices (at most {basevoices.MAX});"
+                         f" unapprove one first")
     conn.execute("UPDATE candidates SET status = 'approved', reviewed_at = ? WHERE id = ?", (now, cid))
-    conn.execute("UPDATE archetypes SET approved = ?, approved_at = ?, updated_at = ? WHERE id = ?",
-                 (cid, now, now, aid))
-    return f"{aid}: approved {cid}"
+    return f"{aid}: approved {cid} ({len(_sync_approved(conn, aid, now))} Base Voices)"
+
+
+def _unapprove(conn: sqlite3.Connection, row: sqlite3.Row) -> str:
+    """Withdraw an approval: the Candidate is pending again (superseded if a regenerate has passed its generation)."""
+    cid = row["target"]
+    c = _candidate(conn, cid)
+    if c["status"] != "approved":
+        raise ValueError(f"{cid} is not approved ({c['status']})")
+    aid, now = c["archetype"], _now()
+    status = "pending" if c["generation"] == c["current"] else "superseded"
+    conn.execute("UPDATE candidates SET status = ?, reviewed_at = ? WHERE id = ?", (status, now, cid))
+    return f"{aid}: unapproved {cid} ({len(_sync_approved(conn, aid, now))} Base Voices)"
 
 
 def _reject(conn: sqlite3.Connection, row: sqlite3.Row) -> str:
     cid = row["target"]
-    c = conn.execute("SELECT archetype FROM candidates WHERE id = ?", (cid,)).fetchone()
-    if c is None:
-        raise ValueError(f"no candidate {cid}")
+    c = _candidate(conn, cid)
     now = _now()
     conn.execute("UPDATE candidates SET status = 'rejected', reviewed_at = ? WHERE id = ?", (now, cid))
-    conn.execute("UPDATE archetypes SET approved = NULL, approved_at = NULL, updated_at = ? WHERE id = ? AND approved = ?",
-                 (now, c["archetype"], cid))
+    _sync_approved(conn, c["archetype"], now)
     return f"{c['archetype']}: rejected {cid}"
 
 
 def _regenerate(conn: sqlite3.Connection, row: sqlite3.Row) -> str:
-    """Append the note to the Archetype's description and start a fresh generation of Candidates (the current ones
-    are superseded, an approval is withdrawn)."""
+    """Append the note to the Archetype's description and start a fresh generation of Candidates. The current
+    generation's pending Candidates are superseded; approved ones stay Base Voices (unapprove to drop one)."""
     aid = row["target"]
     a = conn.execute("SELECT * FROM archetypes WHERE id = ? AND kind != 'narrator'", (aid,)).fetchone()
     if a is None:
@@ -143,16 +181,16 @@ def _regenerate(conn: sqlite3.Connection, row: sqlite3.Row) -> str:
     notes = json.loads(a["notes"] or "[]") + ([note] if note else [])
     now = _now()
     conn.execute("UPDATE candidates SET status = 'superseded', reviewed_at = ? WHERE archetype = ? AND generation = ?"
-                 " AND status != 'rejected'", (now, aid, a["generation"]))
+                 " AND status = 'pending'", (now, aid, a["generation"]))
     conn.execute("DELETE FROM sample_skips WHERE substr(clip, 1, ?) = ?", (len(aid) + 1, f"{aid}/"))
-    conn.execute("UPDATE archetypes SET notes = ?, description = ?, generation = generation + 1, approved = NULL,"
-                 " approved_at = NULL, updated_at = ? WHERE id = ?",
-                 (json.dumps(notes), describe(a["base_description"], notes), now, aid))
+    conn.execute("UPDATE archetypes SET notes = ?, description = ?, generation = generation + 1, updated_at = ?"
+                 " WHERE id = ?", (json.dumps(notes), describe(a["base_description"], notes), now, aid))
     return f"{aid}: regenerating (generation {a['generation'] + 1})" + (f" with note {note!r}" if note else "")
 
 
 ACTIONS: dict[str, Callable[[sqlite3.Connection, sqlite3.Row], str]] = {
     "approve-candidate": _approve,
+    "unapprove-candidate": _unapprove,
     "reject-candidate": _reject,
     "regenerate-archetype": _regenerate,
     **lexicon.ACTIONS,  # accept-lexicon, correct-lexicon
@@ -239,7 +277,8 @@ def sample_lines(conn: sqlite3.Connection, npcs: list[int], n: int) -> list[tupl
 class Summary:
     actions: int = 0
     archetypes: int = 0
-    approved: int = 0
+    approved: int = 0          # Archetypes with at least one approved anchor
+    base_voices: int = 0       # approved anchors over all Archetypes
     candidates: int = 0
     samples: int = 0
     lock: str = ""
@@ -411,13 +450,15 @@ def _render_narrator(conn, out: Path, narrator: Renderer, log) -> int:
 
 
 def _lexicon_voice(conn, npc: int | None, npc_map: dict[int, str]) -> sqlite3.Row | None:
-    """The approved anchor (candidate row + Archetype mode/effects) of the NPC's Archetype, if it has one on disk."""
+    """An approved anchor (candidate row + Archetype mode/effects) of the NPC's Archetype, the first Base Voice with
+    its audio on disk, if any."""
     aid = npc_map.get(npc) if npc is not None else None
     if aid is None or aid == archetypes.NARRATOR:
         return None
-    r = conn.execute("SELECT a.id AS archetype, a.mode, a.effect_chain, c.id, c.path, c.anchor_text FROM archetypes a"
-                     " JOIN candidates c ON c.id = a.approved WHERE a.id = ?", (aid,)).fetchone()
-    return r if r is not None and _exists(r["path"]) else None
+    rows = conn.execute("SELECT a.id AS archetype, a.mode, a.effect_chain, c.id, c.path, c.anchor_text FROM archetypes a"
+                        " JOIN candidates c ON c.archetype = a.id WHERE a.id = ? AND c.status = 'approved'"
+                        " ORDER BY c.id", (aid,)).fetchall()
+    return next((r for r in rows if _exists(r["path"])), None)
 
 
 def _render_lexicon(conn, out: Path, get_engine: Callable[[], Engine], narrator: Renderer, log,
@@ -478,7 +519,8 @@ def _kokoro_narrator(text: str) -> tuple[np.ndarray, int]:
 # --- 4. the lock -----------------------------------------------------------------------------------------------------
 
 def lock_data(conn: sqlite3.Connection, ids: list[str]) -> dict | None:
-    """approved_voices.json's content if every Archetype in `ids` has an approved anchor on disk, else None."""
+    """approved_voices.json's content (every Base Voice of each Archetype) if every Archetype in `ids` has at least
+    one approved anchor on disk, else None."""
     entries = {}
     for aid in ids:
         e = lock.entry(conn, aid)
@@ -504,7 +546,7 @@ def update_lock(conn: sqlite3.Connection, ids: list[str], p: Path, log) -> str:
         except json.JSONDecodeError:
             pass
     lock.write(p, {**data, "locked_at": _now()})
-    log(f"wrote {p} ({len(data['archetypes'])} Archetypes)")
+    log(f"wrote {p} ({len(data['archetypes'])} Archetypes, {lock.base_voices(data)} Base Voices)")
     return "written"
 
 
@@ -545,8 +587,8 @@ def prepare(conn: sqlite3.Connection, out: Path, *, engine: Engine | None = None
         a = conn.execute("SELECT * FROM archetypes WHERE id = ?", (aid,)).fetchone()
         if import_bakeoff and aid in import_bakeoff:
             s.candidates += seed_from_bakeoff(conn, a, out, check, bakeoff_root, log)
-        if a["approved"] or (only and aid not in only):
-            continue
+        if only and aid not in only:
+            continue  # (an approved Archetype still gets its current Candidates finished: more may be approved)
         if not (design or archetypes.style(aid).design):
             log(f"{aid} ({a['label']}): no fresh Candidates by design (seeded by --import-bakeoff {aid};"
                 f" --design renders fresh ones)")
@@ -568,8 +610,9 @@ def prepare(conn: sqlite3.Connection, out: Path, *, engine: Engine | None = None
         s.candidates += _render_candidates(conn, a, out, engine, check, candidates, log)
         lines = sample_lines(conn, [n for n, x in npc_map.items() if x == aid], samples)
         s.samples += _render_samples(conn, a, out, engine, check, lines, log)
-    s.approved = conn.execute(f"SELECT COUNT(*) FROM archetypes WHERE approved IS NOT NULL AND id IN"
-                              f" ({','.join('?' * len(ids))})", ids).fetchone()[0] if ids else 0
+    s.approved, s.base_voices = conn.execute(
+        f"SELECT COUNT(DISTINCT archetype), COUNT(*) FROM candidates WHERE status = 'approved' AND archetype IN"
+        f" ({','.join('?' * len(ids))})", ids).fetchone() if ids else (0, 0)
     s.lock = update_lock(conn, ids, lock_path or lock.path(), log)
     s.names_reviewed = lexicon.progress(conn)[0]
     s.lexicon_lock = lexicon.update_lock(conn, lexicon_path or lexicon.path(), log)
@@ -619,7 +662,7 @@ def summary_text(s: Summary) -> str:
     lex_note = {"open": "lexicon.json not written until every top name is reviewed", "written": "lexicon.json written",
                 "unchanged": "lexicon.json unchanged"}[s.lexicon_lock]
     gate = "Approval Gate complete" if s.lock != "open" and s.lexicon_lock != "open" else "Approval Gate open"
-    return (f"{s.approved}/{s.archetypes} Archetypes approved; rendered {s.candidates} candidates and {s.samples}"
+    return (f"{s.approved}/{s.archetypes} Archetypes approved ({s.base_voices} Base Voices); rendered {s.candidates} candidates and {s.samples}"
             f" samples; applied {s.actions} review actions; {lock_note}. Lexicon: {s.names} names,"
             f" {s.names_reviewed}/{s.names_top} top names reviewed, {s.name_samples} samples rendered; {lex_note}."
             f" {gate}.")

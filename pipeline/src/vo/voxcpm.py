@@ -96,8 +96,8 @@ def engine() -> VoxCPM2:
 
 
 class Backend:
-    """`vo run`'s TTS backend for NPC lines. A voice is `<archetype>@<candidate>` (the Archetype anchor, see
-    lock.voice_id) or `<archetype>@<candidate>#<tag>` (an NPC's own anchor, see vo.voices: the file
+    """`vo run`'s TTS backend for NPC lines. A voice is `<archetype>@<candidate>` (one of the Archetype's
+    anchors, a Base Voice, see lock.voice_id) or `<archetype>@<candidate>#<tag>` (an NPC's own anchor, see vo.voices: the file
     <voices dir>/<archetype>/<tag>.wav, which reads the Archetype's anchor line). The transcript, mode and effect chain
     come from approved_voices.json, so a changed Archetype anchor is a new voice id and requeues its lines. Delivery
     (per line type) isn't applied: continuation copies the anchor's delivery."""
@@ -114,10 +114,10 @@ class Backend:
         for fresh in (False, True):  # a voice not in the loaded lock: reload it once (a later partial run's approval)
             if self._lock is None or (fresh and not self._fixed):
                 self._lock = lock.load(lock.path())
-            entry = self._lock["archetypes"].get(aid)
-            if entry is not None and entry["candidate"] == cand:
+            entry = lock.find(self._lock, aid, cand)  # one of the Archetype's Base Voices
+            if entry is not None:
                 break
-        if entry is None or entry["candidate"] != cand:
+        if entry is None:
             raise ValueError(f"voice {voice!r} is not an approved anchor in approved_voices.json")
         if not tag:
             return entry

@@ -1,11 +1,14 @@
-"""`vo voices`: every NPC's own NPC Voice (#13), derived automatically from its approved Archetype anchor.
+"""`vo voices`: every NPC's own NPC Voice (#13), derived automatically from one of its Archetype's approved anchors.
 
 For each NPC with lines whose Archetype is in approved_voices.json:
 
-1. Render K (default 4) candidate anchors of the Archetype's anchor line (strategy below), seeded from the NPC id.
-2. Score each: speaker-embedding cosine to the Archetype anchor (must be >= the ceiling: it still sounds like the
-   approved race), median pitch within `f0_band_st` semitones and HNR within `hnr_band_db` dB of the Archetype
-   anchor's (the bake-off's seeded orc that came out at 252 Hz is not an orc), ASR WER <= `max_wer` (design only).
+0. Its Base Voice: one of the Archetype's approved anchors (up to 8, each a different person; ADR-0006), assigned by
+   vo.basevoices (balanced, deterministic, Neighbours spread over different ones) and stored as voice_builds.anchor.
+1. Render K (default 4) candidate anchors of its Base Voice's anchor line (strategy below), seeded from the NPC id.
+2. Score each: speaker-embedding cosine to its Base Voice (must be >= the ceiling: it still sounds like the
+   approved race), median pitch within `f0_band_st` semitones and HNR within `hnr_band_db` dB of the Base
+   Voice's (the bake-off's seeded orc that came out at 252 Hz is not an orc), ASR WER <= `max_wer` (design only).
+   (Below, "the Archetype anchor" is the NPC's Base Voice.)
 3. Of the candidates that pass, keep those whose cosine to every already-voiced Neighbour is <= the floor (they sound
    distinct), and pick the one closest to the Archetype anchor.
 4. None clears: re-roll (next attempt: new traits, new seeds) up to `max_rerolls`. Still none: keep the best
@@ -32,8 +35,8 @@ from their name and subname (King: regal; Warchief: commanding; ...).
 Deterministic: an NPC's traits and seeds come from (NPC id, roll, attempt, candidate), so the same NPC gets the same
 voice given the same Neighbour voices. NPCs are built in id order. A dashboard re-roll (review action
 `reroll-voice`, from the Separation page or the NPC browser, or auto-queued by repeated spot-check thumbs-down:
-vo.ratings) bumps the NPC's roll and rebuilds it. A voice whose Archetype anchor has
-changed since it was built is rebuilt too.
+vo.ratings) bumps the NPC's roll and rebuilds it. A voice whose Base Voice has changed
+since it was built (an approval added to or withdrawn from its Archetype re-assigns them) is rebuilt too.
 
 Thresholds are in Config. The floor is provisional (set so that most dsp NPCs clear it: 14 of 20 on a first real
 build): calibrate it by ear on ~20 Neighbour pairs from the Separation page (pairs just under and just over it),
@@ -56,7 +59,7 @@ from typing import Callable, Protocol
 
 import numpy as np
 
-from vo import archetypes, lock, ratings, speaker
+from vo import archetypes, basevoices, lock, ratings, speaker
 
 VOICE_ENV = "VO_VOICES_DIR"  # lets `vo run`'s spawned workers find the NPC anchors
 PIN_FIELD = "voice_prompt"
@@ -547,9 +550,10 @@ def consume_rerolls(conn: sqlite3.Connection, log: Callable[[str], None] = print
     return n
 
 
-def todo(conn: sqlite3.Connection, npcs: dict[int, Npc], lock_data: dict, *, only_npcs=None, only_archetypes=None,
-         limit: int | None = None) -> list[Npc]:
-    """NPCs to (re)build, in id order: no voice yet, re-roll queued, or built on an older Archetype anchor."""
+def todo(conn: sqlite3.Connection, npcs: dict[int, Npc], assigned: dict[int, str], *, only_npcs=None,
+         only_archetypes=None, limit: int | None = None) -> list[Npc]:
+    """NPCs to (re)build, in id order: no voice yet, re-roll queued, or built on another Base Voice than the one
+    assigned (`assigned`: vo.basevoices). NPCs of an Archetype without Base Voices wait."""
     built = {r["npc_id"]: r for r in conn.execute("SELECT npc_id, stale, anchor FROM voice_builds")}
     out = []
     for nid, npc in npcs.items():
@@ -557,32 +561,55 @@ def todo(conn: sqlite3.Connection, npcs: dict[int, Npc], lock_data: dict, *, onl
             continue
         if only_archetypes and npc.archetype not in only_archetypes:
             continue
-        entry = lock_data["archetypes"].get(npc.archetype)
-        if entry is None:
+        want = assigned.get(nid)
+        if want is None:
             continue
         b = built.get(nid)
-        if b is None or b["stale"] or b["anchor"] != entry["candidate"]:
+        if b is None or b["stale"] or b["anchor"] != want:
             out.append(npc)
     return out[:limit] if limit else out
 
 
+def _base_of(voice_id: str) -> str:
+    """The Base Voice (candidate id) an NPC voice id is built on: `voxcpm:<aid>@<candidate>#<tag>`."""
+    return voice_id.split("@", 1)[1].split("#", 1)[0]
+
+
 def drop_stale(conn: sqlite3.Connection, lock_data: dict) -> int:
-    """Remove NPC voices built on an Archetype anchor that is no longer the approved one (`vo run` falls back to
-    the Archetype anchor until `vo voices` rebuilds them)."""
-    gone = []
-    for npc_id, vid, aid in conn.execute("SELECT npc_id, voice_id, archetype FROM voices WHERE voice_id LIKE ?",
-                                         (f"{lock.BACKEND}:%#%",)):
-        e = lock_data["archetypes"].get(aid)
-        if e is None or not vid.startswith(f"{lock.BACKEND}:{aid}@{e['candidate']}#"):
-            gone.append((npc_id,))
+    """Bring the NPC Voices in step with the Base Voices (vo.basevoices). An approval added or withdrawn re-assigns
+    its Archetype's NPCs: one whose Base Voice changed is marked stale with its new Base Voice stored, and its voice is
+    removed (`vo run` speaks its lines in its Base Voice until `vo voices` rebuilds it). A voice whose Archetype has no
+    Base Voice any more is removed too. Returns how many NPCs went stale."""
+    assigned = basevoices.assignments(conn, lock_data)
+    bases = basevoices.bases_of(lock_data)
+    npc_arch = basevoices.voiced_archetypes(conn)
+    own = dict(conn.execute("SELECT npc_id, voice_id FROM voices WHERE voice_id LIKE ?", (f"{lock.BACKEND}:%#%",)))
+    builds = {r["npc_id"]: r for r in conn.execute("SELECT npc_id, anchor, base_voices FROM voice_builds")}
+    gone, moved, signed = set(), [], []
+    for npc in sorted(set(own) | set(builds)):
+        want, vid, b = assigned.get(npc), own.get(npc), builds.get(npc)
+        if want is None:  # its Archetype has no Base Voice (or the NPC no line) now
+            if vid:
+                gone.add(npc)
+            continue
+        sig = basevoices.signature(bases[npc_arch[npc]])
+        if (vid and _base_of(vid) != want) or (b is not None and b["anchor"] != want):
+            if vid:
+                gone.add(npc)
+            if b is not None:
+                moved.append((want, sig, npc))
+        elif b is not None and b["base_voices"] != sig:
+            signed.append((sig, npc))  # same Base Voice under the new set: keep it (sticky from now on)
     with conn:
-        conn.executemany("DELETE FROM voices WHERE npc_id = ?", gone)
-        conn.executemany("UPDATE voice_builds SET stale = 1 WHERE npc_id = ?", gone)
-    return len(gone)
+        conn.executemany("DELETE FROM voices WHERE npc_id = ?", [(n,) for n in sorted(gone)])
+        conn.executemany("UPDATE voice_builds SET stale = 1 WHERE npc_id = ?", [(n,) for n in sorted(gone)])
+        conn.executemany("UPDATE voice_builds SET anchor = ?, base_voices = ?, stale = 1 WHERE npc_id = ?", moved)
+        conn.executemany("UPDATE voice_builds SET base_voices = ? WHERE npc_id = ?", signed)
+    return len(gone | {m[2] for m in moved})
 
 
 def store(conn: sqlite3.Connection, npc: Npc, arch: ArchRef, ch: Choice, roll: int, out_dir: Path,
-          strategy: str) -> str | None:
+          strategy: str, base_voices: str | None = None) -> str | None:
     """Write the NPC's anchor, voices row and voice_builds row. A leftover whose best candidate still fails the
     gate (it doesn't sound like the approved Archetype) gets no own voice: it keeps speaking with the Archetype anchor,
     which is safe for character. Returns the voice id, or None in that case."""
@@ -602,10 +629,10 @@ def store(conn: sqlite3.Connection, npc: Npc, arch: ArchRef, ch: Choice, roll: i
         else:
             conn.execute("DELETE FROM voices WHERE npc_id = ?", (npc.id,))
         conn.execute(
-            "INSERT OR REPLACE INTO voice_builds (npc_id, anchor, roll, attempt, strategy, seed, params, archetype_sim,"
-            " neighbour_sim, neighbour, f0, hnr, wer, tried, status, issue, detail, stale, updated_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
-            (npc.id, arch.candidate, roll, ch.attempt, c.params.get("strategy", strategy), c.seed,
+            "INSERT OR REPLACE INTO voice_builds (npc_id, anchor, base_voices, roll, attempt, strategy, seed, params,"
+            " archetype_sim, neighbour_sim, neighbour, f0, hnr, wer, tried, status, issue, detail, stale, updated_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
+            (npc.id, arch.candidate, base_voices, roll, ch.attempt, c.params.get("strategy", strategy), c.seed,
              json.dumps(c.params), round(c.arch_sim, 4), None if c.neighbour is None else round(c.nmax, 4),
              c.neighbour, c.f0, c.hnr, c.wer, ch.tried, "ok" if ch.ok else "leftover", ch.issue, detail, _now()))
     if old and old[0] and (not own or old[0] != str(path.resolve())):
@@ -625,6 +652,7 @@ class Summary:
     attempts: list[int] = field(default_factory=list)
     arch_sims: list[float] = field(default_factory=list)
     nsims: list[float] = field(default_factory=list)
+    spread: list[basevoices.Spread] = field(default_factory=list)  # NPCs per Base Voice, per Archetype
 
 
 def build(conn: sqlite3.Connection, lock_data: dict, out_dir: Path, *, cfg: Config = Config(),
@@ -639,19 +667,24 @@ def build(conn: sqlite3.Connection, lock_data: dict, out_dir: Path, *, cfg: Conf
     s.rerolls = consume_rerolls(conn, log)
     s.stale = drop_stale(conn, lock_data)
     npcs = load_npcs(conn)
-    s.skipped = sum(1 for n in npcs.values() if n.archetype not in lock_data["archetypes"])
-    work = todo(conn, npcs, lock_data, only_npcs=only_npcs, only_archetypes=only_archetypes, limit=limit)
-    arch_cache: dict[str, ArchRef] = {}
+    bases = basevoices.bases_of(lock_data)
+    assigned = basevoices.assignments(conn, lock_data)
+    s.spread = basevoices.spread(conn, lock_data, assigned)
+    for sp in s.spread:
+        log(f"Base Voices {sp.text()}")
+    s.skipped = sum(1 for n in npcs.values() if n.archetype not in bases)
+    work = todo(conn, npcs, assigned, only_npcs=only_npcs, only_archetypes=only_archetypes, limit=limit)
+    arch_cache: dict[str, ArchRef] = {}  # by Base Voice
     rolls = dict(conn.execute("SELECT npc_id, roll FROM voice_builds").fetchall())
     for npc in work:
-        arch = arch_cache.get(npc.archetype)
+        base = assigned[npc.id]
+        arch = arch_cache.get(base)
         if arch is None:
-            arch = arch_cache[npc.archetype] = load_archetype(npc.archetype, lock_data["archetypes"][npc.archetype],
-                                                              tools)
+            arch = arch_cache[base] = load_archetype(npc.archetype, lock.find(lock_data, npc.archetype, base), tools)
         roll = rolls.get(npc.id, 0)
         neighbours = embeddings(conn, [n for n in neighbour_ids(conn, npc.id) if n != npc.id])
         ch = resolve(lambda a: candidates_for(npc, arch, roll, a, cfg, tools), arch, neighbours, cfg)
-        vid = store(conn, npc, arch, ch, roll, out_dir, cfg.strategy)
+        vid = store(conn, npc, arch, ch, roll, out_dir, cfg.strategy, basevoices.signature(bases[npc.archetype]))
         s.built += 1
         s.ok += ch.ok
         s.leftovers += not ch.ok
@@ -660,7 +693,7 @@ def build(conn: sqlite3.Connection, lock_data: dict, out_dir: Path, *, cfg: Conf
         if ch.cand.neighbour is not None:
             s.nsims.append(ch.cand.nmax)
         c = ch.cand
-        log(f"NPC {npc.id} {npc.name} [{npc.archetype}] {'ok' if ch.ok else 'LEFTOVER ' + (ch.detail or '')}:"
+        log(f"NPC {npc.id} {npc.name} [{base}] {'ok' if ch.ok else 'LEFTOVER ' + (ch.detail or '')}:"
             f" {vid.split('#')[1] if vid else 'Archetype anchor'} arch {c.arch_sim:.3f}"
             + (f" nearest Neighbour {c.neighbour} {c.nmax:.3f}" if c.neighbour is not None else "")
             + f" f0 {c.f0} hnr {c.hnr} ({ch.tried} candidates)")
@@ -675,7 +708,8 @@ def summary_text(s: Summary, cfg: Config) -> str:
             f" re-roll; {s.rerolls} dashboard re-rolls applied; {s.stale} stale voices dropped;"
             f" {s.skipped} NPCs wait for their Archetype's approval.\n"
             f"  Archetype similarity (ceiling {cfg.ceiling}): {stat(s.arch_sims)}\n"
-            f"  closest-Neighbour similarity (floor {cfg.floor}): {stat(s.nsims)}")
+            f"  closest-Neighbour similarity (floor {cfg.floor}): {stat(s.nsims)}"
+            + "".join(f"\n  Base Voices {sp.text()}" for sp in s.spread))
 
 
 def leftovers(conn: sqlite3.Connection) -> list[sqlite3.Row]:

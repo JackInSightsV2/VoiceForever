@@ -3,8 +3,8 @@
 Full (the default): both locks, approved_voices.json and lexicon.json, must be written (vo prepare writes them once
 every Archetype and every top Lexicon name is approved); `vo run` refuses to start otherwise.
 
-Partial (`vo run --partial`, incremental approval): the Archetype anchors approved so far, read from the DB (vo
-prepare's review state), and the Lexicon spellings as they stand in the DB (reviewed where reviewed, drafts
+Partial (`vo run --partial`, incremental approval): the Archetype anchors (Base Voices) approved so far, read from the
+DB (vo prepare's review state), and the Lexicon spellings as they stand in the DB (reviewed where reviewed, drafts
 otherwise). Lines of NPCs whose Archetype isn't approved yet get no job: they wait, neither failed nor quarantined.
 The approved anchors are written to approved_voices.partial.json beside the lock, which `vo run`'s spawned workers
 load. A later approval queues its Archetype's lines; a corrected spelling changes tts_text and requeues the lines
@@ -66,10 +66,10 @@ def open_gate(conn: sqlite3.Connection, partial: bool = False, lock_path: Path |
 
 def text(g: Gate) -> str:
     """One line on what a partial run can voice."""
-    n = len(g.approved["archetypes"])
+    n = f"{len(g.approved['archetypes'])} Archetypes approved ({lock.base_voices(g.approved)} Base Voices)"
     if not g.waiting:
-        return f"partial run: {n} Archetypes approved, none waiting"
+        return f"partial run: {n}, none waiting"
     shown = ", ".join(f"{aid} ({k})" for aid, k in list(g.waiting.items())[:8])
     more = f" and {len(g.waiting) - 8} more" if len(g.waiting) > 8 else ""
-    return (f"partial run: {n} Archetypes approved; {sum(g.waiting.values())} lines wait for {len(g.waiting)}"
+    return (f"partial run: {n}; {sum(g.waiting.values())} lines wait for {len(g.waiting)}"
             f" unapproved Archetypes: {shown}{more}")

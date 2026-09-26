@@ -208,18 +208,19 @@ def test_review_actions_approve_reject_regenerate(small, tmp_path):
     assert small.execute("SELECT COUNT(*) FROM review_actions WHERE consumed_at IS NULL").fetchone()[0] == 1
     assert eng.design_calls == []  # nothing new to render
 
-    # Regenerate with a note: appended to the description, a fresh generation with new seeds, approval withdrawn.
+    # Regenerate with a note: appended to the description, a fresh generation with new seeds; the pending Candidates
+    # are superseded, an approved one stays a Base Voice.
     _act(small, "regenerate-archetype", "orc_f", {"note": "deeper, less theatrical"})
     eng = FakeEngine()
     _prepare(small, tmp_path, eng)
     a = small.execute("SELECT * FROM archetypes WHERE id = 'orc_f'").fetchone()
-    assert a["generation"] == 1 and a["approved"] is None
+    assert a["generation"] == 1 and a["approved"] == "orc_f/g0s1"
     assert a["description"] == archetypes.STYLE["orc_f"].description + " deeper, less theatrical."
     assert json.loads(a["notes"]) == ["deeper, less theatrical"]
     assert sorted(d[2] for d in eng.design_calls) == [1000, 1001]
     assert {d[1] for d in eng.design_calls} == {a["description"]}
     status = dict(small.execute("SELECT id, status FROM candidates").fetchall())
-    assert status["orc_f/g0s0"] == status["orc_f/g0s1"] == "superseded"
+    assert status["orc_f/g0s0"] == "superseded" and status["orc_f/g0s1"] == "approved"
     assert status["orc_f/g1s0"] == "pending"
 
     # Every Candidate of a generation rejected: the next prepare renders a new generation.
@@ -252,7 +253,7 @@ def test_lock_written_once_all_approved_and_gates_run(small, tmp_path, monkeypat
     assert s.lock == "written"
     data = lock.require(small, path)
     assert set(data["archetypes"]) == {"orc_f", "troll_m"}
-    t = data["archetypes"]["troll_m"]
+    t, = data["archetypes"]["troll_m"]["anchors"]
     assert (t["candidate"], t["seed"], t["mode"], t["transcript"]) == ("troll_m/g0s1", 1, "cont", archetypes.A_TROLL)
     assert t["description"] == archetypes.STYLE["troll_m"].description and Path(t["anchor"]).exists()
     assert t["voice_id"] == "voxcpm:troll_m@troll_m/g0s1"
@@ -277,8 +278,12 @@ def test_lock_written_once_all_approved_and_gates_run(small, tmp_path, monkeypat
         cli.main(["--db", str(tmp_path / "vo.sqlite"), "run", "--no-caffeinate"])
     assert "vo run refuses to start" in str(e.value) and "Approval" in str(e.value)
 
-    # Re-opening an Archetype removes the lock.
+    # A regenerate keeps the approved Base Voice (and the lock); withdrawing the last approval re-opens the
+    # Archetype and removes the lock.
     _act(small, "regenerate-archetype", "troll_m", {"note": "raspier"})
+    s, _ = _prepare(small, tmp_path, FakeEngine())
+    assert s.lock == "unchanged" and path.exists()
+    _act(small, "unapprove-candidate", "troll_m/g0s1")
     s, _ = _prepare(small, tmp_path, FakeEngine())
     assert s.lock == "open" and not path.exists()
 
@@ -367,10 +372,10 @@ def test_anchor_chain_processes_the_anchor_once_not_the_lines(small, tmp_path, m
     s, _ = _prepare(small, tmp_path, FakeEngine())
     assert s.lock == "written" and chain.calls == 2
     data = lock.load(tmp_path / "approved_voices.json")
-    o = data["archetypes"]["orc_f"]
+    o, = data["archetypes"]["orc_f"]["anchors"]
     assert o["anchor"] == cands[1]["path"] and o["anchor_chain"] == "test" and o["raw_anchor"] == cands[1]["raw_path"]
     assert o["effect_chain"] is None
-    assert "anchor_chain" not in data["archetypes"]["troll_m"]
+    assert "anchor_chain" not in data["archetypes"]["troll_m"]["anchors"][0]
     # vo run continues from the processed anchor and applies no per-line chain.
     eng = FakeEngine()
     voxcpm.Backend(eng, data).render("Go now.", "orc_f@orc_f/g0s1", 3)
@@ -427,7 +432,7 @@ def test_import_bakeoff_seeds_orc_m_and_is_idempotent(orcs, tmp_path, monkeypatc
     assert (s.candidates, s.samples, chain.calls, eng.design_calls, eng.continue_calls) == (0, 0, 3, [], [])
     assert conn.execute("SELECT COUNT(*) FROM candidates WHERE archetype = 'orc_m'").fetchone()[0] == 5
     assert conn.execute("SELECT status FROM candidates WHERE id = 'orc_m/r4-s6-orc'").fetchone()[0] == "approved"
-    e = prepare.lock_data(conn, ["orc_m"])["archetypes"]["orc_m"]  # (orc_f isn't approved: no lock file yet)
+    e, = prepare.lock_data(conn, ["orc_m"])["archetypes"]["orc_m"]["anchors"]  # (orc_f isn't approved: no lock file yet)
     assert (e["anchor"], e["anchor_chain"], e["raw_anchor"]) == (win["path"], "orc", win["raw_path"])
     assert e["voice_id"] == "voxcpm:orc_m@orc_m/r4-s6-orc" and e["mode"] == "cont"
 
@@ -546,7 +551,7 @@ def test_partial_run_voices_only_approved_archetypes_with_lexicon_drafts(kel, tm
     g, takes, summary = _partial_run(kel, tmp_path)
     assert set(g.approved["archetypes"]) == {"orc_f"} and g.approved["partial"]
     assert g.waiting == {"troll_m": 3}
-    assert lock.load(g.lock_path)["archetypes"]["orc_f"]["candidate"] == "orc_f/g0s1"  # what the workers load
+    assert [a["candidate"] for a in lock.load(g.lock_path)["archetypes"]["orc_f"]["anchors"]] == ["orc_f/g0s1"]  # what the workers load
     voiced = {line: voice for line, voice, _ in takes.lines}
     # Orc lines in the approved anchor, Questobjects and Narrator lines in the Narrator; troll lines wait.
     orc = "voxcpm:orc_f@orc_f/g0s1"
@@ -579,8 +584,8 @@ def test_partial_run_picks_up_later_approvals_and_corrections(kel, tmp_path):
     assert kel.execute("SELECT tts_hash FROM jobs WHERE line_id = 13").fetchone()[0] != hash13
     assert {v for l, v, _ in takes.lines if l != 13} == {"voxcpm:troll_m@troll_m/g0s1"}
 
-    # Re-opening an Archetype takes its lines back out of the queue, their audio stale.
-    _act(kel, "regenerate-archetype", "troll_m", {"note": "raspier"})
+    # Re-opening an Archetype (its last approval withdrawn) takes its lines back out of the queue, their audio stale.
+    _act(kel, "unapprove-candidate", "troll_m/g0s1")
     _prepare(kel, tmp_path, FakeEngine())
     g, takes, summary = _partial_run(kel, tmp_path)
     assert takes.lines == [] and g.waiting == {"troll_m": 3} and summary["waiting"] == 3
@@ -676,3 +681,120 @@ def test_watch_applies_actions_as_they_arrive(small, tmp_path):
     with pytest.raises(ValueError, match="unknown Archetype"):
         prepare.watch(small, tmp_path / "candidates", iterations=1, sleep=lambda s: None, log=logged.append,
                       **{**kw, "only": ["murloc_m"]})
+
+
+# --- several Base Voices per Archetype (ADR-0006) --------------------------------------------------------------------
+
+def _status(conn, aid):
+    return dict(conn.execute("SELECT id, status FROM candidates WHERE archetype = ?", (aid,)).fetchall())
+
+
+def test_approve_adds_a_base_voice_and_unapprove_withdraws_it(small, tmp_path):
+    _prepare(small, tmp_path, FakeEngine(), candidates=3)
+    for cid in ("orc_f/g0s0", "orc_f/g0s2", "orc_f/g0s2"):  # the repeat is a no-op
+        _act(small, "approve-candidate", cid)
+    s, _ = _prepare(small, tmp_path, FakeEngine(), candidates=3)
+    assert _status(small, "orc_f") == {"orc_f/g0s0": "approved", "orc_f/g0s1": "pending", "orc_f/g0s2": "approved"}
+    assert (s.approved, s.base_voices) == (1, 2) and "(2 Base Voices)" in prepare.summary_text(s)
+    assert prepare.base_voices(small, "orc_f") == ["orc_f/g0s0", "orc_f/g0s2"]
+    assert small.execute("SELECT approved FROM archetypes WHERE id = 'orc_f'").fetchone()[0] == "orc_f/g0s0"
+
+    # Unapprove: back to pending; the others stay. Unapproving one that isn't approved is dropped.
+    _act(small, "unapprove-candidate", "orc_f/g0s0")
+    _act(small, "unapprove-candidate", "orc_f/g0s1")
+    logged = []
+    assert prepare.consume_actions(small, logged.append) == 2
+    assert "not approved" in logged[1]
+    assert _status(small, "orc_f") == {"orc_f/g0s0": "pending", "orc_f/g0s1": "pending", "orc_f/g0s2": "approved"}
+    assert small.execute("SELECT approved FROM archetypes WHERE id = 'orc_f'").fetchone()[0] == "orc_f/g0s2"
+
+    # Reject still rejects (an approved one too); with no Base Voice left the Archetype is open again.
+    _act(small, "reject-candidate", "orc_f/g0s2")
+    s, _ = _prepare(small, tmp_path, FakeEngine(), candidates=3)
+    assert _status(small, "orc_f")["orc_f/g0s2"] == "rejected" and (s.approved, s.base_voices) == (0, 0)
+    assert small.execute("SELECT approved, approved_at FROM archetypes WHERE id = 'orc_f'").fetchone()[:] == (None, None)
+    assert lock.from_db(small)["archetypes"] == {}
+
+
+def test_at_most_eight_base_voices(small, tmp_path):
+    from vo import basevoices
+    _prepare(small, tmp_path, FakeEngine(), candidates=basevoices.MAX + 1, samples=0)
+    for i in range(basevoices.MAX + 1):
+        _act(small, "approve-candidate", f"troll_m/g0s{i}")
+    logged = []
+    prepare.consume_actions(small, logged.append)
+    assert len(prepare.base_voices(small, "troll_m")) == basevoices.MAX
+    assert "at most 8" in logged[-1] and _status(small, "troll_m")["troll_m/g0s8"] == "pending"
+
+
+def test_unapprove_after_a_regenerate_supersedes(small, tmp_path):
+    _prepare(small, tmp_path, FakeEngine())
+    _act(small, "approve-candidate", "orc_f/g0s1")
+    _act(small, "regenerate-archetype", "orc_f", {"note": "deeper"})
+    _prepare(small, tmp_path, FakeEngine())
+    _act(small, "approve-candidate", "orc_f/g1s0")
+    _prepare(small, tmp_path, FakeEngine())
+    assert prepare.base_voices(small, "orc_f") == ["orc_f/g0s1", "orc_f/g1s0"]  # across generations
+    _act(small, "unapprove-candidate", "orc_f/g0s1")
+    _prepare(small, tmp_path, FakeEngine())
+    assert _status(small, "orc_f")["orc_f/g0s1"] == "superseded"
+
+
+def test_lock_lists_every_base_voice(small, tmp_path):
+    from vo import gate
+    path = tmp_path / "approved_voices.json"
+    _prepare(small, tmp_path, FakeEngine(), candidates=3)
+    for cid in ("orc_f/g0s2", "orc_f/g0s0", "troll_m/g0s1"):
+        _act(small, "approve-candidate", cid)
+    s, _ = _prepare(small, tmp_path, FakeEngine(), candidates=3)
+    assert s.lock == "written"
+    data = lock.require(small, path)
+    o = data["archetypes"]["orc_f"]
+    assert (o["mode"], o["effect_chain"]) == ("ultimate", None) and o["label"]
+    assert [a["candidate"] for a in o["anchors"]] == ["orc_f/g0s0", "orc_f/g0s2"]
+    a = o["anchors"][1]
+    assert (a["seed"], a["mode"], a["transcript"], a["voice_id"]) == (2, "ultimate", archetypes.A_ORC,
+                                                                       "voxcpm:orc_f@orc_f/g0s2")
+    assert Path(a["anchor"]).exists() and a["description"] == archetypes.STYLE["orc_f"].description
+    assert lock.base_voices(data) == 3
+    # Another approval changes the lock; the partial gate file lists the same anchors.
+    _act(small, "approve-candidate", "orc_f/g0s1")
+    s, _ = _prepare(small, tmp_path, FakeEngine(), candidates=3)
+    assert s.lock == "written" and len(lock.load(path)["archetypes"]["orc_f"]["anchors"]) == 3
+    g = gate.open_gate(small, partial=True, lock_path=path)
+    assert lock.load(g.lock_path)["archetypes"]["orc_f"] == lock.load(path)["archetypes"]["orc_f"]
+    assert "(4 Base Voices)" in gate.text(g)
+    # vo run's backend finds any of them.
+    eng = FakeEngine()
+    voxcpm.Backend(eng, lock.load(path)).render("Go.", "orc_f@orc_f/g0s2", 1)
+    assert eng.continue_calls[0][1] == a["anchor"]
+
+
+def test_single_approval_from_before_several_base_voices_still_works(tmp_path):
+    """A DB where archetypes.approved named the Anchor (and the old lock's one-entry format) keeps working."""
+    conn = db.connect(tmp_path / "vo.sqlite")
+    conn.execute("INSERT INTO npcs (id, name, race, gender) VALUES (1, 'Grunta', 'Orc', 'female')")
+    conn.execute("INSERT INTO lines (id, npc_id, type, raw_text, tts_text) VALUES (10, 1, 'gossip', 'Hi.', 'Hi.')")
+    wav = tmp_path / "c.wav"
+    prepare.write_wav(wav, *FakeEngine._tone(1))
+    conn.execute("INSERT INTO archetypes (id, label, kind, mode, generation, approved) VALUES"
+                 " ('orc_f', 'Orc female', 'race', 'cont', 0, 'orc_f/g0s1')")
+    conn.executemany("INSERT INTO candidates (id, archetype, generation, seed, anchor_text, path, status)"
+                     " VALUES (?, 'orc_f', 0, ?, 'Hi.', ?, 'pending')",
+                     [("orc_f/g0s0", 0, str(wav)), ("orc_f/g0s1", 1, str(wav))])
+    conn.commit()
+    conn.close()
+    conn = db.connect(tmp_path / "vo.sqlite")  # the backfill marks the named Anchor approved
+    assert _status(conn, "orc_f") == {"orc_f/g0s0": "pending", "orc_f/g0s1": "approved"}
+    data = lock.from_db(conn)
+    assert [a["candidate"] for a in data["archetypes"]["orc_f"]["anchors"]] == ["orc_f/g0s1"]
+    assert lock.npc_voice_ids(conn, data) == {1: "voxcpm:orc_f@orc_f/g0s1"}
+    # Approving another adds to it rather than replacing it.
+    _act(conn, "approve-candidate", "orc_f/g0s0")
+    prepare.consume_actions(conn, lambda m: None)
+    assert prepare.base_voices(conn, "orc_f") == ["orc_f/g0s0", "orc_f/g0s1"]
+    # An old one-entry lock still reads.
+    old = {"locked": True, "archetypes": {"orc_f": {"candidate": "orc_f/g0s1", "anchor": str(wav), "transcript": "Hi.",
+                                                    "mode": "cont"}}}
+    assert lock.anchors(old["archetypes"]["orc_f"])[0]["candidate"] == "orc_f/g0s1"
+    assert lock.find(old, "orc_f", "orc_f/g0s1")["anchor"] == str(wav) and lock.find(old, "orc_f", "x") is None

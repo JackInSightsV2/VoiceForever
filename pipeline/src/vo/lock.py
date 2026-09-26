@@ -1,10 +1,15 @@
 """approved_voices.json: the Approval Gate's output, and `vo run`'s precondition.
 
-Written by `vo prepare` once every Archetype has an approved anchor (removed again if one is re-opened); read-only on
-disk. Maps each Archetype to its anchor (audio path, transcript, description, seed, continuation mode, effect chain)
-and fixes the Narrator. With an anchor chain (vo.effects), `anchor` is the processed clip (`raw_anchor` the design
-it came from, `anchor_chain` the chain): lines continue from the processed clip and are not processed again. `vo run` refuses to start without it, and speaks every NPC line as a VoxCPM2 continuation
-of the NPC's own anchor (vo.voices), or of its Archetype anchor while it has none.
+Written by `vo prepare` once every Archetype has at least one approved anchor (removed again if one is re-opened);
+read-only on disk. Maps each Archetype to its Base Voices (ADR-0006): `anchors`, one entry per approved Candidate
+(audio path, transcript, description, seed, continuation mode, effect chain, voice id), and fixes the Narrator. With an
+anchor chain (vo.effects), an entry's `anchor` is the processed clip (`raw_anchor` the design it came from,
+`anchor_chain` the chain): lines continue from the processed clip and are not processed again. `vo run` refuses to
+start without it, and speaks every NPC line as a VoxCPM2 continuation of the NPC's own anchor (vo.voices), or while it
+has none, of its Base Voice (vo.basevoices).
+
+A lock written before several Base Voices has one entry per Archetype (the anchor's fields at its top level);
+`anchors()` reads both.
 """
 from __future__ import annotations
 
@@ -33,12 +38,27 @@ def path() -> Path:
 
 
 def voice_id(aid: str, entry: dict) -> str:
-    """The job voice id for an Archetype's anchor, e.g. `voxcpm:orc_f@orc_f/g0s3`."""
+    """The job voice id for one of an Archetype's anchors, e.g. `voxcpm:orc_f@orc_f/g0s3`."""
     return f"{BACKEND}:{aid}@{entry['candidate']}"
 
 
-HOW = ("Render Candidates with `vo prepare`, approve one anchor per Archetype on the dashboard's Approval page "
-       "(`vo dashboard`, /approval), then run `vo prepare` again to apply the approvals and write the lock.")
+def anchors(entry: dict | None) -> list[dict]:
+    """An Archetype's lock entry as its list of anchor entries (its Base Voices), in either lock format."""
+    if not entry:
+        return []
+    if "anchors" in entry:
+        return list(entry["anchors"])
+    return [entry] if "candidate" in entry else []
+
+
+def find(data: dict, aid: str, candidate: str) -> dict | None:
+    """The anchor entry of that Archetype's Base Voice in the lock, or None."""
+    return next((e for e in anchors(data["archetypes"].get(aid)) if e["candidate"] == candidate), None)
+
+
+HOW = ("Render Candidates with `vo prepare`, approve at least one anchor per Archetype (up to 8, each a Base Voice) on "
+       "the dashboard's Approval page (`vo dashboard`, /approval), then run `vo prepare` again to apply the approvals "
+       "and write the lock.")
 
 
 def load(p: Path) -> dict:
@@ -72,34 +92,42 @@ def remove(p: Path) -> bool:
 
 
 def require(conn: sqlite3.Connection, p: Path) -> dict:
-    """The lock, checked against the DB: every Archetype an NPC with lines needs is approved and its anchor exists.
-    Raises LockError with what to do otherwise."""
+    """The lock, checked against the DB: every Archetype an NPC with lines needs has an approved anchor, and every
+    anchor's audio exists. Raises LockError with what to do otherwise."""
     data = load(p)
     needed = {a.id for a in archetypes.derive(conn) if a.lines}
-    missing = sorted(needed - set(data["archetypes"]))
+    missing = sorted(aid for aid in needed if not anchors(data["archetypes"].get(aid)))
     if missing:
         raise LockError(f"{p} has no approved anchor for: {', '.join(missing)}. {HOW}")
-    gone = sorted(aid for aid, e in data["archetypes"].items() if aid in needed and not Path(e["anchor"]).exists())
+    gone = sorted({aid for aid, e in data["archetypes"].items() if aid in needed
+                   for a in anchors(e) if not Path(a["anchor"]).exists()})
     if gone:
         raise LockError(f"anchor audio missing for: {', '.join(gone)}. {HOW}")
     return data
 
 
 def entry(conn: sqlite3.Connection, aid: str) -> dict | None:
-    """The Archetype's approved anchor as a lock entry, from the DB (vo prepare's review state), or None if it has no
-    approved anchor with its audio on disk."""
-    r = conn.execute("SELECT a.label, a.races, a.mode, a.effect_chain, c.id AS cand, c.path, c.anchor_text,"
-                     " c.description, c.seed, c.anchor_chain, c.raw_path FROM archetypes a JOIN candidates c"
-                     " ON c.id = a.approved WHERE a.id = ?", (aid,)).fetchone()
-    if r is None or not r["path"] or not Path(r["path"]).exists():
+    """The Archetype's lock entry from the DB (vo prepare's review state): its approved anchors (Base Voices) with
+    their audio on disk, in candidate id order; None if it has none."""
+    a = conn.execute("SELECT label, races, mode, effect_chain FROM archetypes WHERE id = ?", (aid,)).fetchone()
+    if a is None:
         return None
-    e = {"label": r["label"], "candidate": r["cand"], "anchor": r["path"], "transcript": r["anchor_text"],
-         "description": r["description"], "seed": r["seed"], "mode": r["mode"] or "cont",
-         "effect_chain": r["effect_chain"], "races": json.loads(r["races"] or "{}")}
-    if r["anchor_chain"]:  # `anchor` is the processed clip; the unprocessed design is kept for reference
-        e.update(anchor_chain=r["anchor_chain"], raw_anchor=r["raw_path"])
-    e["voice_id"] = voice_id(aid, e)
-    return e
+    rows = conn.execute("SELECT id, path, anchor_text, description, seed, anchor_chain, raw_path FROM candidates"
+                        " WHERE archetype = ? AND status = 'approved' ORDER BY id", (aid,)).fetchall()
+    out = []
+    for r in rows:
+        if not r["path"] or not Path(r["path"]).exists():
+            continue
+        e = {"candidate": r["id"], "anchor": r["path"], "transcript": r["anchor_text"], "description": r["description"],
+             "seed": r["seed"], "mode": a["mode"] or "cont", "effect_chain": a["effect_chain"]}
+        if r["anchor_chain"]:  # `anchor` is the processed clip; the unprocessed design is kept for reference
+            e.update(anchor_chain=r["anchor_chain"], raw_anchor=r["raw_path"])
+        e["voice_id"] = voice_id(aid, e)
+        out.append(e)
+    if not out:
+        return None
+    return {"label": a["label"], "races": json.loads(a["races"] or "{}"), "mode": a["mode"] or "cont",
+            "effect_chain": a["effect_chain"], "anchors": out}
 
 
 def envelope(entries: dict) -> dict:
@@ -112,23 +140,33 @@ def from_db(conn: sqlite3.Connection) -> dict:
     """The approved anchors as they stand in the DB, whether or not every Archetype is approved yet: the lock's
     content for the Archetypes approved so far, with `partial` set. What `vo run --partial` and `vo voices --partial`
     speak with before approved_voices.json exists (incremental approval)."""
-    ids = [r[0] for r in conn.execute("SELECT id FROM archetypes WHERE kind != 'narrator' AND approved IS NOT NULL"
-                                      " ORDER BY id")]
+    ids = [r[0] for r in conn.execute("SELECT DISTINCT c.archetype FROM candidates c JOIN archetypes a"
+                                      " ON a.id = c.archetype WHERE a.kind != 'narrator' AND c.status = 'approved'"
+                                      " ORDER BY c.archetype")]
     entries = {aid: e for aid in ids if (e := entry(conn, aid)) is not None}
     return {**envelope(entries), "partial": True}
 
 
+def base_voices(data: dict) -> int:
+    """How many Base Voices (approved anchors) the lock holds, over all Archetypes."""
+    return sum(len(anchors(e)) for e in data["archetypes"].values())
+
+
 def npc_voice_ids(conn: sqlite3.Connection, data: dict) -> dict[int, str]:
-    """{npc id: voice id}: its Archetype's anchor, or the Narrator for races mapped to it. NPCs whose Archetype
-    isn't in the lock are left out (they fall back to `vo run`'s default voice).
+    """{npc id: voice id}: its Base Voice (one of its Archetype's anchors, as vo.basevoices assigns it), or the
+    Narrator for races mapped to it. NPCs whose Archetype isn't in the lock are left out (they fall back to `vo run`'s
+    default voice).
 
     An NPC's own anchor (#13, `vo voices`) takes precedence through `voices.voice_id`, which `vo run` prefers."""
+    from vo import basevoices
+
     narrator = data.get("narrator", {}).get("voice_id")
+    base = basevoices.assignments(conn, data)
     out = {}
     for npc, aid in archetypes.npc_archetypes(conn).items():
         if aid == archetypes.NARRATOR:
             if narrator:
                 out[npc] = narrator
-        elif aid in data["archetypes"]:
-            out[npc] = voice_id(aid, data["archetypes"][aid])
+        elif npc in base:
+            out[npc] = voice_id(aid, find(data, aid, base[npc]))
     return out

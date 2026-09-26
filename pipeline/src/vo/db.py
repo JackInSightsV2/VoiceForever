@@ -63,7 +63,9 @@ CREATE TABLE IF NOT EXISTS runs (
 CREATE TABLE IF NOT EXISTS line_issues (line_id INTEGER, issue TEXT, detail TEXT);
 -- Approval Gate (vo prepare, the dashboard's Approval page). One row per Archetype, plus the fixed Narrator
 -- (kind 'narrator'). description = base_description (race style guide) + notes (JSON list, from "Regenerate with
--- note"). generation is bumped by each regenerate and seeds a fresh batch. approved = the Anchor's candidate id.
+-- note"). generation is bumped by each regenerate and seeds a fresh batch. An Archetype's Base Voices are its
+-- candidates with status 'approved' (up to vo.basevoices.MAX, ADR-0006); approved is a summary kept in step with them:
+-- the first approved candidate id (NULL: none), approved_at the latest approval.
 CREATE TABLE IF NOT EXISTS archetypes (
   id TEXT PRIMARY KEY, label TEXT, kind TEXT, gender TEXT,
   races TEXT, npcs INTEGER, lines INTEGER,
@@ -106,13 +108,14 @@ CREATE TABLE IF NOT EXISTS lexicon_misses (name TEXT, line_id INTEGER, at TEXT, 
 -- closest spawns in yards (spawn pairs); sim: WavLM-SV cosine of their NPC anchors once both have one (vo voices).
 CREATE TABLE IF NOT EXISTS neighbours (a INTEGER, b INTEGER, reason TEXT, distance REAL, sim REAL, PRIMARY KEY (a, b));
 -- How each NPC Voice was built (vo voices): roll (bumped by a dashboard re-roll), the attempt that cleared (re-rolls),
--- its similarity to the Archetype anchor and to its closest Neighbour, and status ok | leftover (issue: ceiling,
--- floor, pitch, hnr, wer; listed for the morning report, never blocking). anchor: the Archetype candidate it was
--- built on (a newly approved anchor rebuilds it). stale = 1: rebuild on the next vo voices.
+-- its similarity to its Base Voice and to its closest Neighbour, and status ok | leftover (issue: ceiling,
+-- floor, pitch, hnr, wer; listed for the morning report, never blocking). anchor: the Archetype candidate it is
+-- built on: its Base Voice (vo.basevoices), and base_voices the Archetype's approved candidates (JSON list) when that
+-- was assigned; a change to them re-assigns the Archetype's NPCs. stale = 1: rebuild on the next vo voices.
 CREATE TABLE IF NOT EXISTS voice_builds (
   npc_id INTEGER PRIMARY KEY, anchor TEXT, roll INTEGER NOT NULL DEFAULT 0, attempt INTEGER, strategy TEXT, seed INTEGER,
   params TEXT, archetype_sim REAL, neighbour_sim REAL, neighbour INTEGER, f0 REAL, hnr REAL, wer REAL, tried INTEGER,
-  status TEXT, issue TEXT, detail TEXT, stale INTEGER NOT NULL DEFAULT 0, updated_at TEXT
+  status TEXT, issue TEXT, detail TEXT, stale INTEGER NOT NULL DEFAULT 0, updated_at TEXT, base_voices TEXT
 );
 -- A line's previous text, kept when Capture (Drift) replaces it.
 CREATE TABLE IF NOT EXISTS line_history (
@@ -150,7 +153,16 @@ MIGRATIONS = [
     ("candidates", "raw_path", "TEXT"),
     ("candidates", "label", "TEXT"),
     ("capture", "ingested_at", "TEXT"),     # local ISO time vo ingest stored it (the morning report's "new Capture")
+    ("voice_builds", "base_voices", "TEXT"),  # the Archetype's Base Voices when the NPC's was assigned (ADR-0006)
 ]
+
+# DBs from before several Base Voices (ADR-0006) knew one Anchor per Archetype through archetypes.approved: make sure
+# that candidate carries the 'approved' status the Base Voices are now read from. Idempotent (vo prepare keeps the
+# column in step with the statuses).
+BACKFILL_APPROVED = """
+UPDATE candidates SET status = 'approved'
+WHERE status = 'pending' AND id IN (SELECT approved FROM archetypes WHERE approved IS NOT NULL AND kind != 'narrator')
+"""
 
 # Fills source_text on core lines: the text before their first Drift update, else their current text.
 BACKFILL_SOURCE_TEXT = """
@@ -175,4 +187,6 @@ def connect(path: Path) -> sqlite3.Connection:
                 conn.execute(BACKFILL_SOURCE_TEXT)
                 conn.commit()
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS capture_record_key ON capture (record_key)")
+    conn.execute(BACKFILL_APPROVED)
+    conn.commit()  # (even with no row changed: the UPDATE opened a write transaction)
     return conn
