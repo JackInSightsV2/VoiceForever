@@ -43,7 +43,8 @@ def fetch_all(data: Path) -> list[Path]:
     paths = [fetch(data / "vmangos")]
     for name in questie.FILES.values():
         paths.append(download(questie.BASE_URL + name, data / "questie" / name))
-    for table in display.TABLES:
+    from vo import npcgamevoice
+    for table in display.TABLES + npcgamevoice.TABLES:
         url = display.DB2_URL.format(table=table, build=display.BUILD)
         paths.append(download(url, data / "db2" / display.BUILD / f"{table}.csv"))
     paths.append(download(display.LISTFILE_URL, data / "community-listfile.csv"))

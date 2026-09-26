@@ -12,6 +12,11 @@ Sticky: an NPC whose voice_builds row was assigned under the Archetype's current
 and .base_voices) keeps its Base Voice, so a new NPC or a changed Neighbour doesn't move voices already built. When the
 set changes (an approval added or withdrawn), none is sticky: the Archetype's NPCs are re-assigned over the new set, and
 those whose Base Voice changed are rebuilt (vo.voices.drop_stale).
+
+Own game voice: an NPC whose in-game voice set (vo.npcgamevoice) went into a game voice speaker Candidate that is a
+Base Voice of its Archetype, or has an approved variation there, takes one of those (the one least used among its
+Neighbours, as above) rather than any Base Voice; a sticky Base Voice that isn't one of them is re-assigned. NPCs
+without one are spread across all the Base Voices as before.
 """
 from __future__ import annotations
 
@@ -45,10 +50,12 @@ def bases_of(data: dict) -> dict[str, list[str]]:
 
 
 def assign(npc_arch: dict[int, str], bases: dict[str, list[str]], adjacent: dict[int, set[int]],
-           fixed: dict[int, str] | None = None) -> dict[int, str]:
+           fixed: dict[int, str] | None = None, preferred: dict[int, list[str]] | None = None) -> dict[int, str]:
     """{npc: Base Voice} for every NPC whose Archetype has Base Voices. `adjacent`: Neighbours per NPC. `fixed`: NPCs
-    that keep a Base Voice (sticky), taken as they come in id order. Pure and deterministic."""
-    fixed = fixed or {}
+    that keep a Base Voice (sticky), taken as they come in id order. `preferred`: Candidates an NPC should be built on
+    when any is a Base Voice of its Archetype (its own game voice speaker and variations of it). Pure and
+    deterministic."""
+    fixed, preferred = fixed or {}, preferred or {}
     members: dict[str, list[int]] = defaultdict(list)
     for npc, aid in npc_arch.items():
         if aid in bases:
@@ -59,10 +66,12 @@ def assign(npc_arch: dict[int, str], bases: dict[str, list[str]], adjacent: dict
         k = len(options)
         count: Counter = Counter()
         for n in sorted(npcs):
+            pref = set(preferred.get(n, ()))
+            own = [i for i in range(k) if options[i] in pref]
             pick = fixed.get(n)
-            if pick not in options:
+            if pick not in options or (own and options.index(pick) not in own):
                 near = Counter(out[m] for m in adjacent.get(n, ()) if m in out and npc_arch.get(m) == aid)
-                pick = min(range(k), key=lambda i: (near[options[i]], count[options[i]], (i - n) % k))
+                pick = min(own or range(k), key=lambda i: (near[options[i]], count[options[i]], (i - n) % k))
                 pick = options[pick]
             out[n] = pick
             count[pick] += 1
@@ -97,9 +106,10 @@ def sticky(conn: sqlite3.Connection, bases: dict[str, list[str]], npc_arch: dict
 
 def assignments(conn: sqlite3.Connection, data: dict) -> dict[int, str]:
     """{npc: Base Voice candidate id} for every voiced NPC of an Archetype in the lock data."""
+    from vo import npcgamevoice
     npc_arch = voiced_archetypes(conn)
     bases = bases_of(data)
-    return assign(npc_arch, bases, adjacency(conn), sticky(conn, bases, npc_arch))
+    return assign(npc_arch, bases, adjacency(conn), sticky(conn, bases, npc_arch), npcgamevoice.preferred(conn))
 
 
 @dataclass

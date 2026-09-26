@@ -104,6 +104,12 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--interval", type=float, default=60.0, help="--follow: seconds between checks (default 60)")
     p = sub.add_parser("ingest", help="import Capture records from Core Addon SavedVariables files")
     p.add_argument("files", type=Path, nargs="+", metavar="SAVEDVARIABLES")
+    p = sub.add_parser("npc-game-voices", help="map every NPC to its in-game voice set (display -> NPCSounds -> clips)"
+                                               " and the game voice speaker Candidate built from it (npc_game_voice)")
+    p.add_argument("--anchors", type=Path, default=DATA / "gamevoice" / "anchors",
+                   help="game voice plans (default data/gamevoice/anchors)")
+    p.add_argument("--listfile", type=Path, default=DATA / "community-listfile.csv")
+    p.add_argument("--db2", type=Path, default=None, help="Forever DB2 CSV exports (default data/db2/<build>)")
     p = sub.add_parser("package", help="build the Voice Packs into build/packs and report lines per pack")
     p.add_argument("--pack", default=None, help="build only this pack, e.g. VoiceForever_Alliance_1-10")
     p = sub.add_parser("install", help="symlink the Core Addon and built packs into an AddOns dir")
@@ -287,6 +293,12 @@ def main(argv: list[str] | None = None) -> None:
             print(ingest.summary_text(path, upload_id, counts))
         if rejected:
             sys.exit(1)
+    elif args.command == "npc-game-voices":
+        from vo import display, npcgamevoice, source
+        conn = db.connect(args.db)
+        world = source.open_world(args.world) if args.world.exists() else None
+        tables = npcgamevoice.load(args.db2 or DATA / "db2" / display.BUILD, args.listfile)
+        print(npcgamevoice.summary_text(npcgamevoice.refresh(conn, world, tables, npcgamevoice.speakers(args.anchors))))
     elif args.command == "package":
         from vo import package, packs, source
         if args.pack and args.pack not in packs.all_packs():

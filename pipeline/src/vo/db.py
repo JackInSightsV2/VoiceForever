@@ -147,6 +147,23 @@ CREATE TABLE IF NOT EXISTS ratings (
   rating TEXT NOT NULL, note TEXT, at TEXT
 );
 CREATE INDEX IF NOT EXISTS ratings_voice ON ratings (voice_id);
+-- Each NPC's in-game voice set (vo.npcgamevoice, vo npc-game-voices): the display and its NPCSoundID, the game voice
+-- kit (Archetype, sound/creature folder) its clips are in, and the speaker Candidate "<archetype>/gv-<key>" that kit went
+-- into (NULL: none). source: db2 (Source Data displays) | wowhead (the display on its Wowhead page).
+CREATE TABLE IF NOT EXISTS npc_game_voice (
+  npc_id INTEGER PRIMARY KEY, display_id INTEGER, npc_sound_id INTEGER, archetype TEXT, kit TEXT,
+  speaker_candidate_id TEXT, source TEXT
+);
+-- Forever Content from Wowhead (vo.wowhead, vo wowhead ingest): what each parsed quest and NPC page said. Quest lines
+-- themselves are lines with source 'wowhead'; NPCs the pipeline lacked are npcs with source 'wowhead'.
+CREATE TABLE IF NOT EXISTS wowhead_quests (
+  id INTEGER PRIMARY KEY, title TEXT, level INTEGER, min_level INTEGER, zone INTEGER, side TEXT,
+  giver INTEGER, ender INTEGER, page_hash TEXT, parsed TEXT, ingested_at TEXT
+);
+CREATE TABLE IF NOT EXISTS wowhead_npcs (
+  id INTEGER PRIMARY KEY, name TEXT, subname TEXT, display_id INTEGER, level_min INTEGER, level_max INTEGER,
+  zones TEXT, sounds TEXT, page_hash TEXT, parsed TEXT, ingested_at TEXT
+);
 """
 
 # Columns added after a table was first created: (table, column, type). connect() adds any that are missing.
