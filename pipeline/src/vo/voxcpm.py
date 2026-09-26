@@ -104,15 +104,19 @@ class Backend:
 
     def __init__(self, engine_: VoxCPM2 | None = None, lock_data: dict | None = None, voices_dir: Path | None = None):
         self._engine, self._lock, self._voices = engine_, lock_data, voices_dir
+        self._fixed = lock_data is not None
 
     def _entry(self, voice: str) -> dict:
         from vo import lock
 
-        data = self._lock if self._lock is not None else lock.load(lock.path())
-        self._lock = data
         base, _, tag = voice.partition("#")
         aid, _, cand = base.partition("@")
-        entry = data["archetypes"].get(aid)
+        for fresh in (False, True):  # a voice not in the loaded lock: reload it once (a later partial run's approval)
+            if self._lock is None or (fresh and not self._fixed):
+                self._lock = lock.load(lock.path())
+            entry = self._lock["archetypes"].get(aid)
+            if entry is not None and entry["candidate"] == cand:
+                break
         if entry is None or entry["candidate"] != cand:
             raise ValueError(f"voice {voice!r} is not an approved anchor in approved_voices.json")
         if not tag:

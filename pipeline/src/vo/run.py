@@ -64,22 +64,16 @@ class Result:
 # --- queue -----------------------------------------------------------------------------------------------------------
 
 def sync_jobs(conn: sqlite3.Connection, default_voice_id: str,
-              narrator_voice_id: str = tts.NARRATOR_VOICE_ID, npc_voices: dict[int, str] | None = None) -> int:
+              narrator_voice_id: str = tts.NARRATOR_VOICE_ID, npc_voices: dict[int, str] | None = None,
+              partial: bool = False) -> int:
     """Queue every line for its voice. Lines with no NPC get the Narrator. An NPC line gets, in order: the NPC's own
     voice (`voices.voice_id`: the per-NPC anchor hook, #13), its Archetype's approved anchor (`npc_voices`, from
     approved_voices.json), else the default. A changed tts_text or Delivery requeues the job and marks its old audio
-    stale; jobs for deleted lines or a replaced voice are dropped. Returns how many were (re)queued."""
-    npc_voices = npc_voices or {}
-    wanted = {}
-    for line_id, npc_id, own, text, line_type in conn.execute(
-            "SELECT l.id, l.npc_id, v.voice_id, l.tts_text, l.type FROM lines l LEFT JOIN voices v ON v.npc_id = l.npc_id"
-            " WHERE COALESCE(l.tts_text, '') != ''"):
-        voice = narrator_voice_id if npc_id is None else own or npc_voices.get(npc_id) or default_voice_id
-        wanted[(line_id, voice)] = tts_hash(text, line_type)
-    have = {(r[0], r[1]): r[2] for r in conn.execute("SELECT line_id, voice_id, tts_hash FROM jobs")}
-    new = [(*k, h) for k, h in wanted.items() if k not in have]
-    changed = [(h, _now(), *k) for k, h in wanted.items() if k in have and have[k] != h]
-    gone = [k for k in have if k not in wanted]
+    stale; jobs for deleted lines or a replaced voice are dropped. Returns how many were (re)queued.
+
+    `partial` (incremental approval, vo.gate): an NPC line with neither its own voice nor an approved Archetype anchor
+    gets no job (and loses one it had): it waits for its Archetype's approval instead of taking the default."""
+    new, changed, gone = _plan(conn, default_voice_id, narrator_voice_id, npc_voices, partial)
     with conn:
         conn.executemany("INSERT INTO jobs (line_id, voice_id, tts_hash) VALUES (?, ?, ?)", new)
         conn.executemany(
@@ -89,6 +83,36 @@ def sync_jobs(conn: sqlite3.Connection, default_voice_id: str,
         conn.executemany("UPDATE audio SET status = 'stale' WHERE line_id = ? AND voice_id = ?",
                          [c[2:] for c in changed] + gone)
     return len(new) + len(changed)
+
+
+def _plan(conn: sqlite3.Connection, default_voice_id: str, narrator_voice_id: str,
+          npc_voices: dict[int, str] | None, partial: bool) -> tuple[list, list, list]:
+    """sync_jobs' changes: (new jobs, requeued jobs, dropped jobs)."""
+    npc_voices = npc_voices or {}
+    wanted = {}
+    for line_id, npc_id, own, text, line_type in conn.execute(
+            "SELECT l.id, l.npc_id, v.voice_id, l.tts_text, l.type FROM lines l LEFT JOIN voices v ON v.npc_id = l.npc_id"
+            " WHERE COALESCE(l.tts_text, '') != ''"):
+        voice = narrator_voice_id if npc_id is None else own or npc_voices.get(npc_id) or (
+            None if partial else default_voice_id)
+        if voice is None:
+            continue
+        wanted[(line_id, voice)] = tts_hash(text, line_type)
+    have = {(r[0], r[1]): r[2] for r in conn.execute("SELECT line_id, voice_id, tts_hash FROM jobs")}
+    new = [(*k, h) for k, h in wanted.items() if k not in have]
+    changed = [(h, _now(), *k) for k, h in wanted.items() if k in have and have[k] != h]
+    gone = [k for k in have if k not in wanted]
+    return new, changed, gone
+
+
+def has_work(conn: sqlite3.Connection, default_voice_id: str, narrator_voice_id: str = tts.NARRATOR_VOICE_ID,
+             npc_voices: dict[int, str] | None = None, partial: bool = False, log: Callable[[str], None] = print) -> bool:
+    """Whether a run would take a line now: a job to queue or requeue, or one pending (after the dashboard's queued
+    retries). `vo run --follow` asks this while it waits; it changes nothing but the review actions it applies."""
+    consume_actions(conn, log)
+    new, changed, _ = _plan(conn, default_voice_id, narrator_voice_id, npc_voices, partial)
+    return bool(new or changed) or conn.execute(
+        "SELECT 1 FROM jobs WHERE status IN ('pending', 'running') LIMIT 1").fetchone() is not None
 
 
 def _payload(action: sqlite3.Row) -> dict:
@@ -214,6 +238,12 @@ def requeue_lines(conn: sqlite3.Connection, line_ids: list[int]) -> None:
                              (tts_hash(text, line_type), _now(), line_id, voice))
 
 
+def unqueued(conn: sqlite3.Connection) -> int:
+    """Lines with spoken text but no job: in a partial run, those waiting for their Archetype's approval."""
+    return conn.execute("SELECT COUNT(*) FROM lines l WHERE COALESCE(l.tts_text, '') != ''"
+                        " AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.line_id = l.id)").fetchone()[0]
+
+
 def claim(conn: sqlite3.Connection, audio_dir: Path, lex=None, **job_opts) -> Job | None:
     """Mark the next pending job running and return it; each take gets a new seed (its lifetime try number).
     With a Lexicon, the job carries the names in its text for the ASR check."""
@@ -334,7 +364,8 @@ def run(conn: sqlite3.Connection, audio_dir: Path, *, voice_id: str = tts.DEFAUL
         asr_model: str = asr.DEFAULT_MODEL, max_attempts: int = MAX_ATTEMPTS, retry_quarantined: bool = True,
         processor: Callable[[Job], Result] = process_job, clock: Callable[[], datetime] = datetime.now, lexicon=None,
         log: Callable[[str], None] = print, poll_s: float = POLL_S,
-        sleep: Callable[[float], None] = time_mod.sleep, report_dir: Path | None = None) -> dict:
+        sleep: Callable[[float], None] = time_mod.sleep, report_dir: Path | None = None,
+        partial: bool = False) -> dict:
     """Work the queue until it is empty or `until` passes; returns a summary. Safe to kill and rerun at any point.
 
     Every loop (at least every `poll_s`) it heartbeats its `runs` row and consumes review_actions, so the dashboard
@@ -344,10 +375,13 @@ def run(conn: sqlite3.Connection, audio_dir: Path, *, voice_id: str = tts.DEFAUL
     names; an auto name ASR keeps missing is respelled and the lines that say it are requeued.
 
     With a `report_dir`, however the run ends, the morning report (vo.report) is written there: <run id>.html and
-    latest.html. A report that fails is logged, never raised."""
+    latest.html. A report that fails is logged, never raised.
+
+    `partial`: only lines with an approved voice are queued (see `sync_jobs`, vo.gate); the rest wait, uncounted
+    as failures, and the summary's `waiting` says how many."""
     with conn:  # a killed run leaves jobs 'running'
         conn.execute("UPDATE jobs SET status = 'pending' WHERE status = 'running'")
-    queued = sync_jobs(conn, voice_id, narrator_voice_id, npc_voices)
+    queued = sync_jobs(conn, voice_id, narrator_voice_id, npc_voices, partial)
     if retry_quarantined:
         with conn:
             conn.execute("UPDATE jobs SET status = 'pending', attempts = 0 WHERE status = 'quarantined'")
@@ -409,6 +443,8 @@ def run(conn: sqlite3.Connection, audio_dir: Path, *, voice_id: str = tts.DEFAUL
                 executor.shutdown(wait=False, cancel_futures=True)
                 executor = _executor(workers)
         summary = {"queued": queued, "this_run": dict(this_run), "paused": stopping, "jobs": counts(conn)}
+        if partial:
+            summary["waiting"] = unqueued(conn)
         end_status = "until" if stopping else "finished"
         return summary
     except Exception as e:
@@ -435,7 +471,8 @@ def summary_text(summary: dict) -> str:
     head = "paused at --until" if summary["paused"] else "finished"
     return (f"{head}: {ran.get('done', 0)} lines done this run, {ran.get('quarantined', 0)} quarantined. "
             f"Totals: {jobs.get('done', 0)} done, {jobs.get('pending', 0)} pending, "
-            f"{jobs.get('quarantined', 0)} quarantined, {jobs.get('skipped', 0)} skipped.")
+            f"{jobs.get('quarantined', 0)} quarantined, {jobs.get('skipped', 0)} skipped."
+            + (f" {summary['waiting']} lines wait for their Archetype's approval." if summary.get("waiting") else ""))
 
 
 # --- process-level plumbing ------------------------------------------------------------------------------------------

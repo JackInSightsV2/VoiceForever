@@ -85,6 +85,39 @@ def require(conn: sqlite3.Connection, p: Path) -> dict:
     return data
 
 
+def entry(conn: sqlite3.Connection, aid: str) -> dict | None:
+    """The Archetype's approved anchor as a lock entry, from the DB (vo prepare's review state), or None if it has no
+    approved anchor with its audio on disk."""
+    r = conn.execute("SELECT a.label, a.races, a.mode, a.effect_chain, c.id AS cand, c.path, c.anchor_text,"
+                     " c.description, c.seed, c.anchor_chain, c.raw_path FROM archetypes a JOIN candidates c"
+                     " ON c.id = a.approved WHERE a.id = ?", (aid,)).fetchone()
+    if r is None or not r["path"] or not Path(r["path"]).exists():
+        return None
+    e = {"label": r["label"], "candidate": r["cand"], "anchor": r["path"], "transcript": r["anchor_text"],
+         "description": r["description"], "seed": r["seed"], "mode": r["mode"] or "cont",
+         "effect_chain": r["effect_chain"], "races": json.loads(r["races"] or "{}")}
+    if r["anchor_chain"]:  # `anchor` is the processed clip; the unprocessed design is kept for reference
+        e.update(anchor_chain=r["anchor_chain"], raw_anchor=r["raw_path"])
+    e["voice_id"] = voice_id(aid, e)
+    return e
+
+
+def envelope(entries: dict) -> dict:
+    from vo import tts, voxcpm
+    return {"locked": True, "model": voxcpm.REPO, "settings": voxcpm.SETTINGS,
+            "narrator": {"voice_id": tts.NARRATOR_VOICE_ID}, "archetypes": entries}
+
+
+def from_db(conn: sqlite3.Connection) -> dict:
+    """The approved anchors as they stand in the DB, whether or not every Archetype is approved yet: the lock's
+    content for the Archetypes approved so far, with `partial` set. What `vo run --partial` and `vo voices --partial`
+    speak with before approved_voices.json exists (incremental approval)."""
+    ids = [r[0] for r in conn.execute("SELECT id FROM archetypes WHERE kind != 'narrator' AND approved IS NOT NULL"
+                                      " ORDER BY id")]
+    entries = {aid: e for aid in ids if (e := entry(conn, aid)) is not None}
+    return {**envelope(entries), "partial": True}
+
+
 def npc_voice_ids(conn: sqlite3.Connection, data: dict) -> dict[int, str]:
     """{npc id: voice id}: its Archetype's anchor, or the Narrator for races mapped to it. NPCs whose Archetype
     isn't in the lock are left out (they fall back to `vo run`'s default voice).

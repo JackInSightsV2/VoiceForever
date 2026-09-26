@@ -144,6 +144,7 @@ def _regenerate(conn: sqlite3.Connection, row: sqlite3.Row) -> str:
     now = _now()
     conn.execute("UPDATE candidates SET status = 'superseded', reviewed_at = ? WHERE archetype = ? AND generation = ?"
                  " AND status != 'rejected'", (now, aid, a["generation"]))
+    conn.execute("DELETE FROM sample_skips WHERE substr(clip, 1, ?) = ?", (len(aid) + 1, f"{aid}/"))
     conn.execute("UPDATE archetypes SET notes = ?, description = ?, generation = generation + 1, approved = NULL,"
                  " approved_at = NULL, updated_at = ? WHERE id = ?",
                  (json.dumps(notes), describe(a["base_description"], notes), now, aid))
@@ -347,6 +348,11 @@ def _continue_audible(engine: Engine, a: sqlite3.Row, c: sqlite3.Row, text: str,
                 raise
 
 
+def skipped(conn: sqlite3.Connection, clip: str, text: str) -> bool:
+    """A sample clip that came back silent on every seed for this text (recorded, so it isn't retried every pass)."""
+    return conn.execute("SELECT 1 FROM sample_skips WHERE clip = ? AND text = ?", (clip, text)).fetchone() is not None
+
+
 def _render_samples(conn, a: sqlite3.Row, out: Path, engine: Engine, check: _Check, lines: list[tuple[int, str]],
                     log) -> int:
     done = 0
@@ -360,10 +366,16 @@ def _render_samples(conn, a: sqlite3.Row, out: Path, engine: Engine, check: _Che
                                (c["id"], idx)).fetchone()
             if row is not None and row["text"] == text and _exists(row["path"]):
                 continue
+            clip = f"{c['id']}#{idx}"
+            if skipped(conn, clip, text):
+                continue
             try:
                 samples, rate = _continue_audible(engine, a, c, text, idx)
             except ValueError as e:  # silent or empty after every retry: skip it, the Candidate stays reviewable
-                log(f"  sample {c['id']} #{idx} (line {line_id}): skipped ({e})")
+                with conn:
+                    conn.execute("INSERT OR REPLACE INTO sample_skips (clip, text, reason, at) VALUES (?, ?, ?, ?)",
+                                 (clip, text, str(e), _now()))
+                log(f"  sample {c['id']} #{idx} (line {line_id}): skipped ({e}); not retried until regenerated")
                 continue
             wav = Path(c["path"]).with_name(f"{Path(c['path']).stem}_{idx}.wav")
             write_wav(wav, samples, rate)
@@ -429,11 +441,20 @@ def _render_lexicon(conn, out: Path, get_engine: Callable[[], Engine], narrator:
             written, line = f"Have you heard of {r['name']}?", None
         spoken = lexicon.Lexicon({r["name"]: r["spelling"]})(written)
         voice = _lexicon_voice(conn, line["npc_id"] if line else None, npc_map)
+        samples = None
         if voice is not None:
-            samples, rate = get_engine().continue_(spoken, voice["path"], voice["anchor_text"], 0, voice["mode"] or "cont")
-            samples = audio.trim(effects.apply(voice["effect_chain"], samples, rate), rate)
+            for attempt in range(SAMPLE_TRIES):  # VoxCPM2 now and then returns silence: re-seed
+                got, rate = get_engine().continue_(spoken, voice["path"], voice["anchor_text"], 1000 * attempt,
+                                                   voice["mode"] or "cont")
+                try:
+                    samples = audio.trim(effects.apply(voice["effect_chain"], got, rate), rate)
+                    break
+                except ValueError:
+                    continue
             label = f"VoxCPM2, {voice['archetype']} anchor {voice['id']}"
-        else:
+            if samples is None:
+                log(f"lexicon sample {r['name']}: {voice['archetype']} anchor silent on every seed, Narrator instead")
+        if samples is None:
             samples, rate = narrator(spoken)
             label = f"Narrator, {tts.NARRATOR_VOICE_ID}"
         slug = "".join(c if c.isalnum() else "_" for c in r["name"])
@@ -460,20 +481,11 @@ def lock_data(conn: sqlite3.Connection, ids: list[str]) -> dict | None:
     """approved_voices.json's content if every Archetype in `ids` has an approved anchor on disk, else None."""
     entries = {}
     for aid in ids:
-        r = conn.execute("SELECT a.label, a.races, a.mode, a.effect_chain, c.id AS cand, c.path, c.anchor_text,"
-                         " c.description, c.seed, c.anchor_chain, c.raw_path FROM archetypes a JOIN candidates c"
-                         " ON c.id = a.approved WHERE a.id = ?", (aid,)).fetchone()
-        if r is None or not _exists(r["path"]):
+        e = lock.entry(conn, aid)
+        if e is None:
             return None
-        entries[aid] = {"label": r["label"], "candidate": r["cand"], "anchor": r["path"], "transcript": r["anchor_text"],
-                        "description": r["description"], "seed": r["seed"], "mode": r["mode"] or "cont",
-                        "effect_chain": r["effect_chain"], "races": json.loads(r["races"] or "{}")}
-        if r["anchor_chain"]:  # `anchor` is the processed clip; the unprocessed design is kept for reference
-            entries[aid].update(anchor_chain=r["anchor_chain"], raw_anchor=r["raw_path"])
-    for aid, e in entries.items():
-        e["voice_id"] = lock.voice_id(aid, e)
-    return {"locked": True, "model": voxcpm.REPO, "settings": voxcpm.SETTINGS,
-            "narrator": {"voice_id": tts.NARRATOR_VOICE_ID}, "archetypes": entries}
+        entries[aid] = e
+    return lock.envelope(entries)
 
 
 def update_lock(conn: sqlite3.Connection, ids: list[str], p: Path, log) -> str:
@@ -562,6 +574,43 @@ def prepare(conn: sqlite3.Connection, out: Path, *, engine: Engine | None = None
     s.names_reviewed = lexicon.progress(conn)[0]
     s.lexicon_lock = lexicon.update_lock(conn, lexicon_path or lexicon.path(), log)
     return s
+
+
+def pending_actions(conn: sqlite3.Connection) -> int:
+    """Unconsumed Approval review_actions (the ones `vo prepare` applies)."""
+    return conn.execute(f"SELECT COUNT(*) FROM review_actions WHERE consumed_at IS NULL AND action IN"
+                        f" ({','.join('?' * len(ACTIONS))})", tuple(ACTIONS)).fetchone()[0]
+
+
+WATCH_INTERVAL = 30.0
+
+
+def watch(conn: sqlite3.Connection, out: Path, *, interval: float = WATCH_INTERVAL, iterations: int | None = None,
+          sleep: Callable[[float], None] | None = None, log: Callable[[str], None] = print, **kw) -> int:
+    """`vo prepare --watch`: a full `prepare` pass (review actions, Lexicon samples of corrected names, Candidates of
+    regenerated Archetypes, the locks), then every `interval` seconds another pass if the Approval page queued
+    actions since (or the last pass failed). The models stay loaded between passes. `iterations` bounds the loop (for
+    tests); returns the passes run. A pass that fails is logged and retried next time, except the first, which raises
+    (a bad --archetype). A permanently silent sample is recorded (sample_skips), so passes don't keep retrying it."""
+    import time
+    sleep = sleep or time.sleep
+    n = passes = 0
+    retry = True  # the first pass always runs
+    while iterations is None or n < iterations:
+        if retry or pending_actions(conn):
+            try:
+                log(summary_text(prepare(conn, out, log=log, **kw)))
+                retry = False
+            except Exception as e:
+                if passes == 0:
+                    raise
+                log(f"vo prepare --watch: pass failed, retrying next time: {type(e).__name__}: {e}")
+                retry = True
+            passes += 1
+        n += 1
+        if iterations is None or n < iterations:
+            sleep(interval)
+    return passes
 
 
 def summary_text(s: Summary) -> str:

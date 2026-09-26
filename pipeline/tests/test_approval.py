@@ -499,3 +499,180 @@ def test_always_silent_sample_is_skipped_not_fatal(small, tmp_path):
     s, _ = _prepare(small, tmp_path, AlwaysSilentEngine())
     assert small.execute("SELECT count(*) FROM candidates").fetchone()[0] > 0
     assert small.execute("SELECT count(*) FROM candidate_samples").fetchone()[0] == 0
+
+
+# --- incremental approval: vo run --partial, vo prepare --watch --------------------------------------------------------
+
+KEL = "Kel'Thuzad will fall, and the Horde will be there to see it happen."
+
+
+class Takes:
+    """vo run processor stand-in: records the lines it rendered, writes a file."""
+    def __init__(self):
+        self.lines = []
+
+    def __call__(self, job):
+        self.lines.append((job.line_id, job.voice_id, job.text))
+        Path(job.out).parent.mkdir(parents=True, exist_ok=True)
+        Path(job.out).write_bytes(b"OggS")
+        return run.Result(True, None, 0.0, job.text, 1.0)
+
+
+def _partial_run(conn, tmp_path):
+    from vo import gate
+    g = gate.open_gate(conn, partial=True, lock_path=tmp_path / "approved_voices.json")
+    takes = Takes()
+    summary = run.run(conn, tmp_path / "audio", voice_id="kokoro:am_michael",
+                      npc_voices=lock.npc_voice_ids(conn, g.approved), workers=1, processor=takes, lexicon=g.lexicon,
+                      log=lambda m: None, partial=True)
+    return g, takes, summary
+
+
+@pytest.fixture
+def kel(small):
+    """`small` with an orc line and a troll line naming Kel'Thuzad (a top Lexicon name, drafted Kel-thoo-zahd)."""
+    small.executemany("INSERT INTO lines (id, npc_id, type, raw_text, tts_text) VALUES (?, ?, 'gossip', ?, ?)",
+                      [(13, 1, KEL, KEL), (22, 2, "Kel'Thuzad be comin', mon.", "Kel'Thuzad be comin', mon.")])
+    small.commit()
+    return small
+
+
+def test_partial_run_voices_only_approved_archetypes_with_lexicon_drafts(kel, tmp_path):
+    _prepare(kel, tmp_path, FakeEngine())
+    _act(kel, "approve-candidate", "orc_f/g0s1")
+    _prepare(kel, tmp_path, FakeEngine())
+    assert not (tmp_path / "approved_voices.json").exists()  # troll_m isn't approved: no lock
+
+    g, takes, summary = _partial_run(kel, tmp_path)
+    assert set(g.approved["archetypes"]) == {"orc_f"} and g.approved["partial"]
+    assert g.waiting == {"troll_m": 3}
+    assert lock.load(g.lock_path)["archetypes"]["orc_f"]["candidate"] == "orc_f/g0s1"  # what the workers load
+    voiced = {line: voice for line, voice, _ in takes.lines}
+    # Orc lines in the approved anchor, Questobjects and Narrator lines in the Narrator; troll lines wait.
+    orc = "voxcpm:orc_f@orc_f/g0s1"
+    assert voiced == {10: orc, 11: orc, 12: orc, 13: orc, 30: "kokoro:bm_lewis", 40: "kokoro:bm_lewis"}
+    assert KEL.replace("Kel'Thuzad", "Kel-thoo-zahd") in {t for _, _, t in takes.lines}  # the unreviewed draft
+    assert summary["waiting"] == 3 and summary["jobs"] == {"done": 6}
+    assert "3 lines wait" in run.summary_text(summary)
+    assert kel.execute("SELECT COUNT(*) FROM jobs WHERE line_id IN (20, 21, 22)").fetchone()[0] == 0
+
+    # Nothing new: a second partial run renders nothing.
+    _, takes, _ = _partial_run(kel, tmp_path)
+    assert takes.lines == []
+
+
+def test_partial_run_picks_up_later_approvals_and_corrections(kel, tmp_path):
+    _prepare(kel, tmp_path, FakeEngine())
+    _act(kel, "approve-candidate", "orc_f/g0s0")
+    _prepare(kel, tmp_path, FakeEngine())
+    _partial_run(kel, tmp_path)
+    hash13 = kel.execute("SELECT tts_hash FROM jobs WHERE line_id = 13").fetchone()[0]
+
+    # Later: troll_m approved and Kel'Thuzad corrected on the Approval page, applied by vo prepare.
+    _act(kel, "approve-candidate", "troll_m/g0s1")
+    _act(kel, "correct-lexicon", "Kel'Thuzad", {"spelling": "Kell-thoo-zad"})
+    _prepare(kel, tmp_path, FakeEngine())
+    g, takes, summary = _partial_run(kel, tmp_path)
+    assert g.waiting == {} and summary["waiting"] == 0
+    assert sorted(line for line, _, _ in takes.lines) == [13, 20, 21, 22]  # the new lines, and the respelled one
+    assert dict((l, t) for l, _, t in takes.lines)[13] == KEL.replace("Kel'Thuzad", "Kell-thoo-zad")
+    assert kel.execute("SELECT tts_hash FROM jobs WHERE line_id = 13").fetchone()[0] != hash13
+    assert {v for l, v, _ in takes.lines if l != 13} == {"voxcpm:troll_m@troll_m/g0s1"}
+
+    # Re-opening an Archetype takes its lines back out of the queue, their audio stale.
+    _act(kel, "regenerate-archetype", "troll_m", {"note": "raspier"})
+    _prepare(kel, tmp_path, FakeEngine())
+    g, takes, summary = _partial_run(kel, tmp_path)
+    assert takes.lines == [] and g.waiting == {"troll_m": 3} and summary["waiting"] == 3
+    assert {r[0] for r in kel.execute("SELECT status FROM audio WHERE line_id IN (20, 21, 22)")} == {"stale"}
+
+
+def test_partial_gate_needs_no_locks_but_full_run_still_does(kel, tmp_path):
+    from vo import gate
+    _prepare(kel, tmp_path, FakeEngine())
+    g = gate.open_gate(kel, partial=True, lock_path=tmp_path / "approved_voices.json")
+    assert g.approved["archetypes"] == {} and g.waiting == {"orc_f": 4, "troll_m": 3}
+    with pytest.raises(lock.LockError):
+        gate.open_gate(kel, partial=False, lock_path=tmp_path / "approved_voices.json",
+                       lexicon_path=tmp_path / "lexicon.json")
+    with pytest.raises(SystemExit):  # --follow needs --partial
+        cli.main(["--db", str(tmp_path / "vo.sqlite"), "run", "--follow", "--no-caffeinate"])
+
+
+def test_run_has_work_sees_new_approvals_without_queueing(kel, tmp_path):
+    _prepare(kel, tmp_path, FakeEngine())
+    _act(kel, "approve-candidate", "orc_f/g0s0")
+    _prepare(kel, tmp_path, FakeEngine())
+    g, _, _ = _partial_run(kel, tmp_path)
+    assert not run.has_work(kel, "kokoro:am_michael", npc_voices=lock.npc_voice_ids(kel, g.approved), partial=True,
+                            log=lambda m: None)
+    _act(kel, "approve-candidate", "troll_m/g0s0")
+    _prepare(kel, tmp_path, FakeEngine())
+    approved = lock.from_db(kel)
+    jobs = kel.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
+    assert run.has_work(kel, "kokoro:am_michael", npc_voices=lock.npc_voice_ids(kel, approved), partial=True,
+                        log=lambda m: None)
+    assert kel.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == jobs  # asking queues nothing
+
+
+def test_voxcpm_backend_reloads_the_lock_for_a_newly_approved_voice(tmp_path, monkeypatch):
+    path = tmp_path / "approved_voices.partial.json"
+    entry = {"candidate": "orc_f/g0s0", "anchor": "/x/a.wav", "transcript": "t", "mode": "cont"}
+    lock.write(path, {"locked": True, "archetypes": {"orc_f": entry}})
+    monkeypatch.setenv(lock.ENV, str(path))
+    b = voxcpm.Backend(FakeEngine())
+    b.render("hello", "orc_f@orc_f/g0s0", 1)
+    lock.write(path, {"locked": True, "archetypes": {"orc_f": entry, "troll_m": {**entry, "candidate": "troll_m/g0s1"}}})
+    b.render("hello", "troll_m@troll_m/g0s1", 1)
+    with pytest.raises(ValueError, match="not an approved anchor"):
+        b.render("hello", "troll_m@troll_m/g9s9", 1)
+
+
+def test_always_silent_sample_is_recorded_and_not_retried(small, tmp_path):
+    eng = AlwaysSilentEngine()
+    _prepare(small, tmp_path, eng)
+    assert len(eng.continue_calls) == 8 * prepare.SAMPLE_TRIES
+    skips = [r[0] for r in small.execute("SELECT clip FROM sample_skips ORDER BY clip")]
+    assert len(skips) == 8 and skips[0] == "orc_f/g0s0#1"
+    eng2 = AlwaysSilentEngine()
+    _prepare(small, tmp_path, eng2)
+    assert eng2.continue_calls == []  # recorded: the next pass doesn't retry it
+    # A regenerate clears its Archetype's skips (and its new generation renders afresh).
+    _act(small, "regenerate-archetype", "orc_f")
+    _prepare(small, tmp_path, FakeEngine())
+    assert {r[0].split("/")[0] for r in small.execute("SELECT clip FROM sample_skips")} == {"troll_m"}
+
+
+def test_lexicon_sample_falls_back_to_the_narrator_when_the_anchor_is_silent(kel, tmp_path):
+    _prepare(kel, tmp_path, FakeEngine())
+    _act(kel, "approve-candidate", "orc_f/g0s0")
+    _act(kel, "correct-lexicon", "Kel'Thuzad", {"spelling": "Kell-thoo-zad"})
+    eng = AlwaysSilentEngine()
+    _, narrated = _prepare(kel, tmp_path, eng)
+    r = kel.execute("SELECT sample_voice, sample_spelling, sample_spoken FROM lexicon WHERE name = ?",
+                    ("Kel'Thuzad",)).fetchone()
+    assert r["sample_spelling"] == "Kell-thoo-zad" and r["sample_voice"].startswith("Narrator")
+    assert r["sample_spoken"] in narrated and any("Kell-thoo-zad" in c[0] for c in eng.continue_calls)
+
+
+def test_watch_applies_actions_as_they_arrive(small, tmp_path):
+    logged, slept = [], []
+    kw = dict(engine=FakeEngine(), asr_backend=FakeASR(), narrator=lambda t: FakeEngine._tone(7), candidates=2,
+              samples=2, lock_path=tmp_path / "approved_voices.json", lexicon_path=tmp_path / "lexicon.json")
+
+    def sleep(s):  # between passes the reviewer approves something, once
+        slept.append(s)
+        if len(slept) == 1:
+            _act(small, "approve-candidate", "orc_f/g0s0")
+
+    passes = prepare.watch(small, tmp_path / "candidates", interval=5, iterations=3, sleep=sleep,
+                           log=logged.append, **kw)
+    assert passes == 2 and slept == [5, 5]  # the first pass, one for the approval, the third idle
+    assert small.execute("SELECT approved FROM archetypes WHERE id = 'orc_f'").fetchone()[0] == "orc_f/g0s0"
+    assert sum("Archetypes approved" in m for m in logged) == 2
+    assert prepare.pending_actions(small) == 0
+
+    # A first pass that fails raises (e.g. an unknown --archetype).
+    with pytest.raises(ValueError, match="unknown Archetype"):
+        prepare.watch(small, tmp_path / "candidates", iterations=1, sleep=lambda s: None, log=logged.append,
+                      **{**kw, "only": ["murloc_m"]})

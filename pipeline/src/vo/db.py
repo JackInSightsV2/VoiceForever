@@ -87,6 +87,9 @@ CREATE TABLE IF NOT EXISTS candidate_samples (
   candidate TEXT, idx INTEGER, line_id INTEGER, text TEXT, path TEXT, duration_s REAL, asr TEXT, wer REAL,
   PRIMARY KEY (candidate, idx)
 );
+-- Approval Gate sample clips that came back silent on every seed (vo prepare): clip is "<candidate>#<idx>", text the
+-- text tried. Not retried while the text is the same; a regenerate clears its Archetype's (new generation, new ids).
+CREATE TABLE IF NOT EXISTS sample_skips (clip TEXT PRIMARY KEY, text TEXT, reason TEXT, at TEXT);
 -- The Lexicon (#12, vo.lexicon): one row per lore name found in the lines. spelling is the one in use (the draft,
 -- the reviewed spelling, or for an auto name its alt-th alternative). status: pending (a top name awaiting review) |
 -- accepted | corrected | auto. rank is by lines (NULL once a reviewed name leaves the lines). The sample_* columns

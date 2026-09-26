@@ -3,6 +3,7 @@ import argparse
 import os
 import signal
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -44,6 +45,10 @@ def main(argv: list[str] | None = None) -> None:
                         " anchor chain, and render their sample lines; implies --archetype (repeatable), e.g. orc_m")
     p.add_argument("--design", action="store_true",
                    help="render fresh voice-design Candidates even for Archetypes seeded from the bake-off (orc_m)")
+    p.add_argument("--watch", action="store_true",
+                   help="keep running: apply the Approval page's actions as they arrive (approvals, Lexicon"
+                        " corrections, regenerations), render what they need, write the locks when complete")
+    p.add_argument("--interval", type=float, default=30.0, help="--watch: seconds between checks (default 30)")
     p = sub.add_parser("voices", help="build every NPC's own voice (anchor) from its approved Archetype, and the"
                                       " Neighbours table (resumable)")
     p.add_argument("--npc", type=int, action="append", help="only this NPC id (repeatable)")
@@ -58,6 +63,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--radius", type=float, default=150.0, help="spawn distance for Neighbours, yards (default 150)")
     p.add_argument("--neighbours-only", action="store_true", help="refresh the Neighbours table and its stats only")
     p.add_argument("--leftovers", action="store_true", help="list NPCs whose voice missed a constraint, build nothing")
+    p.add_argument("--partial", action="store_true",
+                   help="build from the Archetype anchors approved so far (DB), without approved_voices.json")
     p = sub.add_parser("run", aliases=["generate"], help="work the generation queue unattended (resumable)")
     p.add_argument("--voice", default=None,
                    help="fallback voice for NPCs whose Archetype has no approved anchor: Kokoro voice or"
@@ -73,6 +80,12 @@ def main(argv: list[str] | None = None) -> None:
                    help="ntfy topic URL to notify on finish or fatal error (default $VO_NTFY)")
     p.add_argument("--no-caffeinate", action="store_true", help="don't hold caffeinate -dis")
     p.add_argument("--no-retry-quarantined", action="store_true", help="leave quarantined lines alone this run")
+    p.add_argument("--partial", action="store_true",
+                   help="incremental approval: voice only lines whose Archetype has an approved anchor (read from"
+                        " the DB; Narrator lines always), with the Lexicon spellings as they stand; the rest wait")
+    p.add_argument("--follow", action="store_true",
+                   help="with --partial: when the queue is empty, keep checking for newly approved work and run it")
+    p.add_argument("--interval", type=float, default=60.0, help="--follow: seconds between checks (default 60)")
     p = sub.add_parser("ingest", help="import Capture records from Core Addon SavedVariables files")
     p.add_argument("files", type=Path, nargs="+", metavar="SAVEDVARIABLES")
     p = sub.add_parser("package", help="build the Voice Packs into build/packs and report lines per pack")
@@ -152,11 +165,17 @@ def main(argv: list[str] | None = None) -> None:
                 races = ", ".join(f"{r} ({n})" for r, n in a.races.items())
                 print(f"{a.id:<22} {a.label:<28} {a.npcs:>4} NPCs {a.lines:>5} lines  {races}")
             return
+        kw = dict(only=args.archetype, candidates=args.candidates, samples=args.samples,
+                  asr_model=args.asr_model or asr.DEFAULT_MODEL, design=args.design, import_bakeoff=args.import_bakeoff,
+                  lock_path=lock.path(), lexicon_path=lexicon.path(), areas=_areas(args.world))
         try:
-            summary = prepare.prepare(conn, BUILD / "candidates", only=args.archetype, candidates=args.candidates,
-                                      samples=args.samples, asr_model=args.asr_model or asr.DEFAULT_MODEL,
-                                      design=args.design, import_bakeoff=args.import_bakeoff,
-                                      lock_path=lock.path(), lexicon_path=lexicon.path(), areas=_areas(args.world))
+            if args.watch:
+                try:
+                    prepare.watch(conn, BUILD / "candidates", interval=args.interval, **kw)
+                except KeyboardInterrupt:
+                    print("vo prepare --watch: stopped")
+                return
+            summary = prepare.prepare(conn, BUILD / "candidates", **kw)
         except (archetypes.UnmappedRace, ValueError) as e:
             sys.exit(f"vo prepare: {e}")
         print(prepare.summary_text(summary))
@@ -174,8 +193,8 @@ def main(argv: list[str] | None = None) -> None:
         print(neighbours.refresh(conn, world, args.radius).text())
         if args.neighbours_only:
             return
-        try:
-            approved = lock.load(lock.path())
+        try:  # --partial: the Archetype anchors approved so far (DB), before approved_voices.json exists
+            approved = lock.from_db(conn) if args.partial else lock.load(lock.path())
         except lock.LockError as e:
             sys.exit(f"vo voices: {e}")
         cfg = voices.Config(strategy=args.strategy, candidates=args.candidates)
@@ -187,36 +206,51 @@ def main(argv: list[str] | None = None) -> None:
         voices.update_sims(conn)
         print(voices.summary_text(summary, cfg))
     elif args.command in ("run", "generate"):
-        from vo import archetypes, asr, lexicon, lock, prep, run, tts, voices
+        from vo import archetypes, asr, gate, lock, run, tts, voices
+        if args.follow and not args.partial:
+            parser.error("--follow needs --partial")
         conn = db.connect(args.db)
-        try:  # the Approval Gate: both locks
-            approved = lock.require(conn, lock.path())
-            names = lexicon.require(conn, lexicon.path())
-        except (lock.LockError, archetypes.UnmappedRace) as e:
-            sys.exit(f"vo run refuses to start: {e}")
-        os.environ[lock.ENV] = str(lock.path())  # spawned workers load the same lock
-        lex = lexicon.from_db(conn, names)
-        respelled = prep.prepare_lines(conn, lex)  # a Lexicon change requeues its lines (tts_hash)
-        if respelled:
-            print(f"Lexicon: tts_text updated for {respelled} lines")
-        os.environ.setdefault(voices.VOICE_ENV, str(voices.default_dir()))  # ... and find the NPC anchors
-        stale = voices.drop_stale(conn, approved)
-        if stale:
-            print(f"{stale} NPC voices were built on a replaced Archetype anchor: they speak with the Archetype anchor"
-                  f" until `vo voices` rebuilds them")
-        voice = args.voice or tts.DEFAULT_VOICE
-        narrator = args.narrator_voice or approved.get("narrator", {}).get("voice_id") or tts.NARRATOR_VOICE_ID
-        opts = dict(
-            voice_id=voice if ":" in voice else f"kokoro:{voice}", npc_voices=lock.npc_voice_ids(conn, approved),
-            narrator_voice_id=narrator if ":" in narrator else f"kokoro:{narrator}", workers=args.workers,
-            until=run.parse_until(args.until, datetime.now()) if args.until else None,
-            wer_threshold=args.wer_threshold, asr_model=args.asr_model or asr.DEFAULT_MODEL,
-            retry_quarantined=not args.no_retry_quarantined, lexicon=lex, report_dir=BUILD / "reports")
-        _refresh_coverage(conn, args.world)  # the zones and Voice Packs the dashboard and morning report show
+        until = run.parse_until(args.until, datetime.now()) if args.until else None
+        os.environ.setdefault(voices.VOICE_ENV, str(voices.default_dir()))  # workers find the NPC anchors
         signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))  # unwind: stop workers, release caffeinate
         with run.caffeinate(not args.no_caffeinate):
-            summary = run.run_notified(args.ntfy, lambda: run.run(conn, BUILD / "audio", **opts))
-        print(run.summary_text(summary))
+            first = True
+            while True:
+                try:  # the Approval Gate: both locks, or (--partial) what is approved so far
+                    g = gate.open_gate(conn, args.partial)
+                except (lock.LockError, archetypes.UnmappedRace) as e:
+                    sys.exit(f"vo run refuses to start: {e}")
+                os.environ[lock.ENV] = str(g.lock_path)  # spawned workers load the same anchors
+                if g.respelled:
+                    print(f"Lexicon: tts_text updated for {g.respelled} lines")
+                stale = voices.drop_stale(conn, g.approved)
+                if stale:
+                    print(f"{stale} NPC voices were built on a replaced Archetype anchor: they speak with the"
+                          f" Archetype anchor until `vo voices` rebuilds them")
+                voice = args.voice or tts.DEFAULT_VOICE
+                narrator = (args.narrator_voice or g.approved.get("narrator", {}).get("voice_id")
+                            or tts.NARRATOR_VOICE_ID)
+                opts = dict(
+                    voice_id=voice if ":" in voice else f"kokoro:{voice}", npc_voices=lock.npc_voice_ids(conn, g.approved),
+                    narrator_voice_id=narrator if ":" in narrator else f"kokoro:{narrator}", workers=args.workers,
+                    until=until, wer_threshold=args.wer_threshold, asr_model=args.asr_model or asr.DEFAULT_MODEL,
+                    retry_quarantined=first and not args.no_retry_quarantined, lexicon=g.lexicon,
+                    report_dir=BUILD / "reports", partial=args.partial)
+                if not first and not run.has_work(conn, opts["voice_id"], opts["narrator_voice_id"],
+                                                  opts["npc_voices"], args.partial):
+                    if until is not None and datetime.now() >= until:
+                        break
+                    time.sleep(args.interval)  # --follow: wait for approvals (vo prepare) and dashboard retries
+                    continue
+                if args.partial:
+                    print(gate.text(g))
+                _refresh_coverage(conn, args.world)  # the zones and Voice Packs the dashboard and morning report show
+                summary = run.run_notified(args.ntfy, lambda: run.run(conn, BUILD / "audio", **opts))
+                print(run.summary_text(summary))
+                if not args.follow or summary["paused"]:
+                    break
+                first = False
+                print(f"--follow: waiting for newly approved work (every {args.interval:g}s; Ctrl-C to stop)")
     elif args.command == "ingest":
         from vo import ingest, savedvars
         conn, rejected = db.connect(args.db), 0
