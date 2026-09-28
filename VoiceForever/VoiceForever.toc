@@ -1,0 +1,14 @@
+## Interface: 16001
+## Title: VoiceForever
+## Notes: Voice-over for quest text and NPC gossip in World of Warcraft: Forever.
+## Version: 0.1.0
+## IconTexture: Interface\AddOns\VoiceForever\icon
+## SavedVariables: VoiceForeverDB
+
+Drift.lua
+Settings.lua
+Reveal.lua
+Compat.lua
+Capture.lua
+Export.lua
+VoiceForever.lua

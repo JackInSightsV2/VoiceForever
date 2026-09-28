@@ -1,0 +1,76 @@
+name: Submit captured dialogue
+description: Send the dialogue VoiceForever recorded in World of Warcraft Forever.
+title: "Captured dialogue"
+labels: ["capture"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping! In game, type **`/vf export`**. A box opens with your captured dialogue already selected:
+        press **Ctrl+C** (Mac: **Cmd+C**) and paste it into *Captured dialogue* below.
+
+        If the box says **Page 1 of N**, paste page 1 here, submit, then paste each other page (use **Next >**) as a
+        comment on this issue. Or, instead of pasting, attach the collector zip under *Files*.
+
+        Each submission is reviewed by the maintainer. Nothing here can log in to your account: it's only the text
+        NPCs said to you.
+  - type: textarea
+    id: export
+    attributes:
+      label: Captured dialogue
+      description: The text from `/vf export` (it starts with `{"vf":"capture"`). Paste the whole page.
+      placeholder: '{"vf":"capture","v":1,...}'
+      render: json
+    validations:
+      required: false
+  - type: textarea
+    id: files
+    attributes:
+      label: Files
+      description: |
+        Optional, instead of pasting: drag in the zip the collector script made (`VoiceForever-<name>-<date>.zip`),
+        or `WTF/Account/<ACCOUNT>/SavedVariables/VoiceForever.lua` zipped (GitHub won't take a `.lua` file; renaming
+        it to `VoiceForever.lua.txt` also works). Up to 25 MB.
+    validations:
+      required: false
+  - type: dropdown
+    id: race
+    attributes:
+      label: Character race
+      description: Optional. Which character you played.
+      options:
+        - Human
+        - Dwarf
+        - Night Elf
+        - Gnome
+        - Orc
+        - Undead
+        - Tauren
+        - Troll
+        - Skyborne
+    validations:
+      required: false
+  - type: dropdown
+    id: class
+    attributes:
+      label: Character class
+      description: Optional.
+      options:
+        - Warrior
+        - Paladin
+        - Hunter
+        - Rogue
+        - Priest
+        - Shaman
+        - Mage
+        - Warlock
+        - Druid
+    validations:
+      required: false
+  - type: input
+    id: zones
+    attributes:
+      label: Zones played
+      description: Optional. Where you went this session, e.g. "Elwynn Forest, Westfall".
+    validations:
+      required: false

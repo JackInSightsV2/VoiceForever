@@ -1,0 +1,8 @@
+<Bindings>
+  <Binding name="VOICEFOREVER_REPLAY" header="VOICEFOREVER" category="ADDONS">
+    VoiceForever.Replay()
+  </Binding>
+  <Binding name="VOICEFOREVER_STOP" category="ADDONS">
+    VoiceForever.Stop()
+  </Binding>
+</Bindings>
