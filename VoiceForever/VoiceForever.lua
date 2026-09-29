@@ -141,15 +141,18 @@ local function playerPos()
   if ok and y then return x, y, map end
 end
 
-function VF.GreetedRecently(event, guid)
+-- Per line, not per NPC: a new page of a conversation (the reply to a talk option, a GOSSIP_SHOW of other text from the
+-- same NPC) plays; only the same line again stays quiet.
+function VF.GreetedRecently(event, guid, file)
   if not (GREETINGS[event] and guid and VF.Settings.Get("greetOnce")) then return false end
-  local g, now = greeted[guid], GetTime()
+  local key = guid .. "|" .. (file or "")
+  local g, now = greeted[key], GetTime()
   local x, y, map = playerPos()
   local recent = g and now - g.t < VF.GREET_RESET_S
   if recent and g.x and x then
     recent = map == g.map and ((x - g.x) ^ 2 + (y - g.y) ^ 2) <= VF.GREET_RESET_YARDS ^ 2
   end
-  greeted[guid] = { t = recent and g.t or now, x = x, y = y, map = map }
+  greeted[key] = { t = recent and g.t or now, x = x, y = y, map = map }
   return recent and true or false
 end
 
@@ -344,7 +347,7 @@ local function onInteraction(event)
   end
   VF.current = { entry = entry, window = window, npcGUID = guid, event = event }
   VF.UpdateButtons()
-  if VF.GreetedRecently(event, guid) then
+  if VF.GreetedRecently(event, guid, entry.file) then
     debug(event, entry.file, "greeted recently: not auto-played (Replay plays it)")
   elseif VF.AutoPlays(event, entry) then
     debug(event, questId, entry.file, VF.PlayDelayed(VF.current) and "playing" or "failed")

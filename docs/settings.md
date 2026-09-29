@@ -11,7 +11,7 @@ Open the panel with `/vf options`, or **Options → AddOns → VoiceForever**. E
 | Quest completion (`complete`) | on | Voice the quest giver when you hand in a quest. |
 | Quest greetings (`greeting`) | on | Voice NPCs that offer several quests. |
 | Gossip (`gossip`) | on | Voice NPC gossip windows. |
-| Greet once (`greetonce`) | on | Speak an NPC's greeting or gossip only once: coming back within a minute, without walking away, stays quiet. Replay still plays it. |
+| Greet once (`greetonce`) | on | Speak an NPC's greeting or gossip once: the same line again within a minute, without walking away, stays quiet. New pages of a conversation still play, and Replay always plays. |
 | Narrator (`narrator`) | on | Voice quest objectives, and quests from objects and items, with the Narrator. |
 | Narrator only (`narratoronly`) | off | Only the Narrator speaks: quest objectives, and quests from objects and items. NPCs stay silent. |
 | Text follows the voice (`reveal`) | on | Reveal the quest text word by word as it is spoken. Off: the text shows as usual. |

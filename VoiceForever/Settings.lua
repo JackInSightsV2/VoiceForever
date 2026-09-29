@@ -29,7 +29,7 @@ S.OPTIONS = {
   { "greeting", "Quest greetings", "Voice NPCs that offer several quests." },
   { "gossip", "Gossip", "Voice NPC gossip windows." },
   { "greetOnce", "Greet once",
-    "Speak an NPC's greeting or gossip only once: coming back to it within a minute, without walking away, stays quiet. Replay still plays it." },
+    "Speak an NPC's greeting or gossip once: the same line again within a minute, without walking away, stays quiet. New pages of a conversation still play, and Replay always plays." },
   { "narrator", "Narrator", "Voice quests from objects and items (wanted posters, notes) with the Narrator." },
   { "narratorOnly", "Narrator only",
     "Only the Narrator speaks: quest objectives, and quests from objects and items. NPCs stay silent." },
