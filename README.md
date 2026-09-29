@@ -18,7 +18,7 @@ quest text fades in word by word in step with the voice.
 - **Works with your quest UI**: Blizzard's quest frame, [Immersion](https://www.curseforge.com/wow/addons/immersion) and
   [DialogueUI](https://www.curseforge.com/wow/addons/dialogueui).
 - **Replay and stop** buttons and key bindings, a start delay, and per-type toggles.
-- **Play quest** in the quest log: hear any quest you've picked up again.
+- **Play** in the quest log: hear any quest you've picked up again.
 - **Dialogue capture**: lines the addon doesn't know yet are recorded, so new Forever content can be added
   ([how to send them](docs/contributing-dialogue.md)).
 

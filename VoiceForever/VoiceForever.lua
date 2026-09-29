@@ -404,7 +404,7 @@ local function makeLogButton(parent, name, x, y)
   local b = CreateFrame("Button", name, parent, "UIPanelButtonTemplate")
   b:SetSize(88, 22)
   b:SetPoint("TOPRIGHT", parent, "TOPRIGHT", x, y)
-  b:SetText("Play quest")
+  b:SetText("Play")
   b:SetScript("OnClick", function() VF.PlayQuestLog() end)
   if parent.HookScript then
     parent:HookScript("OnHide", function() if playingWindow == "questlog" then VF.Stop() end end)
@@ -428,7 +428,7 @@ local function makeMapButton()
   b:SetFrameStrata(back:GetFrameStrata())
   b:SetFrameLevel(back:GetFrameLevel())
   if back.GetNormalFontObject and back:GetNormalFontObject() then b:SetNormalFontObject(back:GetNormalFontObject()) end
-  b:SetText("Play quest")
+  b:SetText("Play")
   b:SetScript("OnClick", function() VF.PlayQuestLog() end)
   if details.HookScript then
     details:HookScript("OnHide", function() if playingWindow == "questlog" then VF.Stop() end end)
