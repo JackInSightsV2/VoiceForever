@@ -413,8 +413,32 @@ local function makeLogButton(parent, name, x, y)
   VF.UpdateLogButtons()
 end
 
+-- The world map's quest details: beside its Back button, on the same strip (a child of the details frame itself is
+-- drawn under that strip: only its label shows), same size, font and height, on the right.
+local function makeMapButton()
+  local details = QuestMapFrame and QuestMapFrame.DetailsFrame
+  if not details or VF.logButtons.VoiceForeverQuestMapPlay then return end
+  local back = (details.BackFrame and details.BackFrame.BackButton) or details.BackButton
+  if not back then return makeLogButton(details, "VoiceForeverQuestMapPlay", -8, -4) end
+  local strip = back:GetParent() or details
+  local b = CreateFrame("Button", "VoiceForeverQuestMapPlay", strip, "UIPanelButtonTemplate")
+  b:SetSize(back:GetWidth() > 0 and back:GetWidth() or 120, back:GetHeight() > 0 and back:GetHeight() or 22)
+  b:SetPoint("TOP", back, "TOP", 0, 0)
+  b:SetPoint("RIGHT", strip, "RIGHT", -10, 0)
+  b:SetFrameStrata(back:GetFrameStrata())
+  b:SetFrameLevel(back:GetFrameLevel())
+  if back.GetNormalFontObject and back:GetNormalFontObject() then b:SetNormalFontObject(back:GetNormalFontObject()) end
+  b:SetText("Play quest")
+  b:SetScript("OnClick", function() VF.PlayQuestLog() end)
+  if details.HookScript then
+    details:HookScript("OnHide", function() if playingWindow == "questlog" then VF.Stop() end end)
+  end
+  VF.logButtons.VoiceForeverQuestMapPlay = b
+  VF.UpdateLogButtons()
+end
+
 function VF.SetupQuestLog()
-  makeLogButton(QuestMapFrame and QuestMapFrame.DetailsFrame, "VoiceForeverQuestMapPlay", -8, -4)
+  makeMapButton()
   makeLogButton(QuestLogPopupDetailFrame, "VoiceForeverQuestLogPopupPlay", -28, -30)
   makeLogButton(QuestLogDetailFrame or QuestLogFrame, "VoiceForeverQuestLogPlay", -40, -40)
 end
