@@ -11,7 +11,8 @@ quest text fades in word by word in step with the voice.
 ## Features
 
 - **Quests and gossip**: quest details, progress, completion, multi-quest greetings and NPC gossip.
-- **Narrator**: quest objectives, and quests started from objects and items.
+- **Narrator**: quest objectives, and quests started from objects and items. A **Narrator only** setting keeps
+  NPCs silent and plays just the Narrator.
 - **Text follows the voice**: the quest text reveals word by word as it is spoken.
 - **Greet once**: coming back to an NPC within a minute doesn't repeat its greeting.
 - **Works with your quest UI**: Blizzard's quest frame, [Immersion](https://www.curseforge.com/wow/addons/immersion) and

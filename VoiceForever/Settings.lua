@@ -15,7 +15,7 @@ S.VOLUME_CVAR = "Sound_DialogVolume"
 -- key -> default. Per-type toggles and auto-play gate automatic playback only; the replay button always plays.
 S.DEFAULTS = {
   detail = true, progress = true, complete = true, greeting = true, gossip = true, narrator = true,
-  autoPlay = true, replayButton = true, englishAudio = true, reveal = true, greetOnce = true,
+  autoPlay = true, replayButton = true, englishAudio = true, reveal = true, greetOnce = true, narratorOnly = false,
   delay = 1.0, -- seconds between a window opening and its voice starting (0-3)
 }
 S.DELAY_MAX = 3
@@ -31,6 +31,8 @@ S.OPTIONS = {
   { "greetOnce", "Greet once",
     "Speak an NPC's greeting or gossip only once: coming back to it within a minute, without walking away, stays quiet. Replay still plays it." },
   { "narrator", "Narrator", "Voice quests from objects and items (wanted posters, notes) with the Narrator." },
+  { "narratorOnly", "Narrator only",
+    "Only the Narrator speaks: quest objectives, and quests from objects and items. NPCs stay silent." },
   { "reveal", "Text follows the voice",
     "Reveal the quest text word by word as it is spoken. Off: the text shows as usual." },
   { "replayButton", "Replay button", "Show a Replay button on the quest and gossip windows." },

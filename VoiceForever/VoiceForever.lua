@@ -83,7 +83,17 @@ end
 function VF.ForNpcSex(entry, npcSex)
   local alt = entry and entry.alt
   if not alt or alt.sex ~= npcSex then return entry end
-  return { file = alt.file, hash = entry.hash, narrator = entry.narrator, t = alt.t, o = alt.o }
+  return { file = alt.file, hash = entry.hash, narrator = entry.narrator, t = alt.t, o = alt.o, obj = entry.obj }
+end
+
+-- Narrator only (setting narratorOnly): just the Narrator speaks. A Narrator line (a quest from an object or item)
+-- plays as it is; a quest detail plays its Objectives alone (entry.obj, in the Narrator's voice, the word-by-word
+-- reveal starting at the objectives); anything else (NPC speech: progress, completion, greetings, gossip) is nil.
+function VF.NarratorOnly(entry)
+  if not entry or not VF.Settings.Get("narratorOnly") or entry.narrator then return entry end
+  local obj = entry.obj
+  if not obj then return nil end
+  return { file = obj.file, hash = entry.hash, narrator = true, t = obj.t, o = obj.t and 1 or nil }
 end
 
 function VF.MatchGossip(npcId, text, gender)
@@ -322,6 +332,11 @@ local function onInteraction(event)
   if entry.hash and hash ~= entry.hash and not VF.PlayerTextMatches(text, entry.hash) then
     VF.Capture.Record("drift", event, questId, text, hash, entry.hash)
     debug(event, questId, "Drift", entry.hash, "->", hash)
+  end
+  entry = VF.NarratorOnly(entry)
+  if not entry then
+    debug(event, questId, "Narrator only: no Narrator part")
+    return
   end
   if not VF.Voiced(event) then
     debug(event, questId, "English audio off")
