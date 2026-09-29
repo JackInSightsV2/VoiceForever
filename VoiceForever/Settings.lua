@@ -35,7 +35,7 @@ S.OPTIONS = {
     "Only the Narrator speaks: quest objectives, and quests from objects and items. NPCs stay silent." },
   { "reveal", "Text follows the voice",
     "Reveal the quest text word by word as it is spoken. Off: the text shows as usual." },
-  { "replayButton", "Replay button", "Show a Replay button on the quest and gossip windows, and a Play quest button in the quest log." },
+  { "replayButton", "Replay button", "Show a Replay button on the quest and gossip windows, and a Play button in the quest log." },
   { "englishAudio", "English audio on non-English clients",
     "Play the English Quest Text audio on non-English game clients. Gossip is voiced on English clients only." },
 }
