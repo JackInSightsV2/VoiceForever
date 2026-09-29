@@ -182,7 +182,8 @@ end
 
 local function applies(line)
   local t = line and line.entry and line.entry.t
-  return VF.Settings.Get("reveal") and t and #t > 0 and VF.Compat.Supports(line.event)
+  -- Not with Immersion: its talk box keeps its own text playback (the user's call).
+  return VF.Settings.Get("reveal") and t and #t > 0 and VF.Compat.Supports(line.event) and not VF.Compat.ImmersionFrame()
 end
 
 local function begin(line, start)

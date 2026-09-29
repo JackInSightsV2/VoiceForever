@@ -295,7 +295,18 @@ local function makeButton(parent, name, window)
   b:SetText("Replay")
   b:SetScript("OnClick", function() VF.Replay() end)
   b:Hide()
-  if parent.HookScript then parent:HookScript("OnHide", function() closed(window) end) end
+  -- Closed, unless another UI took the conversation over: Immersion and DialogueUI hide Blizzard's window as it opens
+  -- (checked a frame later, once they've shown theirs). Their own closing stops the line (Compat.lua).
+  if parent.HookScript then
+    parent:HookScript("OnHide", function()
+      if not VF.Compat.Replaces() then return closed(window) end -- no other UI: closed now
+      local function check()
+        if parent:IsShown() or VF.Compat.TookOver() then return end
+        closed(window)
+      end
+      if C_Timer and C_Timer.After then C_Timer.After(0, check) else check() end
+    end)
+  end
   VF.buttons[window] = b
 end
 

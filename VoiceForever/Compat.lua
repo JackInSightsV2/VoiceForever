@@ -185,6 +185,15 @@ function C.Release(sources, finished)
   end
 end
 
+-- Whether Immersion or DialogueUI is loaded: they replace Blizzard's quest and gossip windows.
+function C.Replaces() return C.ImmersionFrame() ~= nil or C.DialogueUIFrame() ~= nil end
+
+-- Whether Immersion's or DialogueUI's frame is showing the conversation (they hide Blizzard's windows to take over).
+function C.TookOver()
+  local imm, dui = C.ImmersionFrame(), C.DialogueUIFrame()
+  return (imm and imm:IsShown() or dui and dui:IsShown()) and true or false
+end
+
 -- --- set-up once every addon has loaded ------------------------------------------------------------------------------
 
 local function stopWhenClosed(f)
@@ -195,11 +204,15 @@ local function stopWhenClosed(f)
   end)
 end
 
-local function replayButton(parent, name)
+local function replayButton(parent, name, close)
   if not parent or _G[name] then return end
   local b = CreateFrame("Button", name, parent, "UIPanelButtonTemplate")
   b:SetSize(72, 22)
-  b:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -8, -8)
+  if close then
+    b:SetPoint("RIGHT", close, "LEFT", -4, 0) -- in line with their close button, just left of it
+  else
+    b:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -44, -8)
+  end
   b:SetText("Replay")
   b:SetScript("OnClick", function() VF.Replay() end)
   b:Hide()
@@ -234,7 +247,9 @@ function C.Setup()
   local imm = C.ImmersionFrame()
   if imm then
     stopWhenClosed(imm)
-    replayButton(imm.TalkBox, "VoiceForeverImmersionReplay")
+    local tb = imm.TalkBox
+    local close = tb and ((tb.MainFrame and tb.MainFrame.CloseButton) or tb.CloseButton)
+    replayButton(tb, "VoiceForeverImmersionReplay", close)
   end
   local dui = C.DialogueUIFrame()
   if dui then
