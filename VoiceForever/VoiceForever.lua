@@ -357,6 +357,68 @@ local function onInteraction(event)
 end
 
 local frame = CreateFrame("Frame")
+-- Quest log: a "Play quest" button on the quest log's details plays the selected quest's details (the quest giver, then
+-- the Narrator's objectives, as when it was offered; with Narrator only, just the objectives). Forever's quest log is
+-- the retail one (the world map's quest details, and its pop-out); a classic QuestLogFrame is covered too.
+VF.logButtons = {}
+
+local function questLogQuestID()
+  if QuestLogPopupDetailFrame and QuestLogPopupDetailFrame:IsShown() and QuestLogPopupDetailFrame.questID then
+    return QuestLogPopupDetailFrame.questID
+  end
+  if QuestMapFrame_GetDetailQuestID then
+    local id = QuestMapFrame_GetDetailQuestID()
+    if id and id > 0 then return id end
+  end
+  if C_QuestLog and C_QuestLog.GetSelectedQuest then
+    local id = C_QuestLog.GetSelectedQuest()
+    if id and id > 0 then return id end
+  end
+  if GetQuestLogSelection and GetQuestLogTitle then
+    local i = GetQuestLogSelection()
+    if i and i > 0 then
+      local id = select(8, GetQuestLogTitle(i))
+      if id and id > 0 then return id end
+    end
+  end
+end
+
+function VF.PlayQuestLog()
+  local id = questLogQuestID()
+  local entry = id and VF.Lookup(id, "detail", GENDERS[UnitSex("player")])
+  entry = VF.NarratorOnly(entry)
+  if not entry then
+    print("|cff33ff99VoiceForever|r", "no voice for this quest yet")
+    return false
+  end
+  return VF.Play(entry.file, "questlog")
+end
+
+function VF.UpdateLogButtons()
+  local show = VF.Settings.Get("replayButton")
+  for _, b in pairs(VF.logButtons) do if show then b:Show() else b:Hide() end end
+end
+
+local function makeLogButton(parent, name, x, y)
+  if not parent or VF.logButtons[name] then return end
+  local b = CreateFrame("Button", name, parent, "UIPanelButtonTemplate")
+  b:SetSize(88, 22)
+  b:SetPoint("TOPRIGHT", parent, "TOPRIGHT", x, y)
+  b:SetText("Play quest")
+  b:SetScript("OnClick", function() VF.PlayQuestLog() end)
+  if parent.HookScript then
+    parent:HookScript("OnHide", function() if playingWindow == "questlog" then VF.Stop() end end)
+  end
+  VF.logButtons[name] = b
+  VF.UpdateLogButtons()
+end
+
+function VF.SetupQuestLog()
+  makeLogButton(QuestMapFrame and QuestMapFrame.DetailsFrame, "VoiceForeverQuestMapPlay", -8, -4)
+  makeLogButton(QuestLogPopupDetailFrame, "VoiceForeverQuestLogPopupPlay", -28, -30)
+  makeLogButton(QuestLogDetailFrame or QuestLogFrame, "VoiceForeverQuestLogPlay", -40, -40)
+end
+
 for _, event in ipairs({ "ADDON_LOADED", "PLAYER_LOGIN", "QUEST_FINISHED", "GOSSIP_CLOSED", "QUEST_DETAIL",
   "QUEST_PROGRESS", "QUEST_COMPLETE", "QUEST_GREETING", "GOSSIP_SHOW" }) do
   frame:RegisterEvent(event)
@@ -366,13 +428,14 @@ frame:SetScript("OnEvent", function(_, event, arg1)
     if arg1 == "VoiceForever" then
       VF.Capture.Load()
       VF.Settings.Load()
-      VF.Settings.OnChange = function(key) if key == "replayButton" then VF.UpdateButtons() end end
+      VF.Settings.OnChange = function(key) if key == "replayButton" then VF.UpdateButtons(); VF.UpdateLogButtons() end end
       VF.Settings.Register()
       if not VF.buttons.quest then makeButton(QuestFrame, "VoiceForeverQuestReplay", "quest") end
       if not VF.buttons.gossip then makeButton(GossipFrame, "VoiceForeverGossipReplay", "gossip") end
     end
   elseif event == "PLAYER_LOGIN" then
     VF.Compat.Setup() -- every addon has loaded: Immersion, DialogueUI (Compat.lua)
+    VF.SetupQuestLog()
   elseif event == "QUEST_FINISHED" then
     closed("quest")
   elseif event == "GOSSIP_CLOSED" then

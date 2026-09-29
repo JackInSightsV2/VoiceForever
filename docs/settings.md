@@ -15,7 +15,7 @@ Open the panel with `/vf options`, or **Options → AddOns → VoiceForever**. E
 | Narrator (`narrator`) | on | Voice quest objectives, and quests from objects and items, with the Narrator. |
 | Narrator only (`narratoronly`) | off | Only the Narrator speaks: quest objectives, and quests from objects and items. NPCs stay silent. |
 | Text follows the voice (`reveal`) | on | Reveal the quest text word by word as it is spoken. Off: the text shows as usual. |
-| Replay button (`replaybutton`) | on | Show a Replay button on the quest and gossip windows. |
+| Replay button (`replaybutton`) | on | Show a Replay button on the quest and gossip windows, and a Play quest button in the quest log. |
 | English audio on non-English clients (`englishaudio`) | on | Play the English quest audio on non-English clients. Gossip is voiced on English clients only. |
 
 Two values:
